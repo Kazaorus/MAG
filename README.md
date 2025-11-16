@@ -1,6 +1,7 @@
 # MAG
 
 基于 MAA_FrameWork 框架的 深空之眼 自动化小助手，主要功能集中在每日任务的自动化
+
 ~~自动战斗先等孩子把YOLO用明白了再做~~
 ## 叠甲
 1. 该项目是一个编程新手的第一个开源项目，可能包含以下要素：
@@ -12,7 +13,10 @@
 2. 由于一些原因，平常的空余时间较少，可能无法对该项目进行及时的维护和更新
 3. 考虑到一般二游的运营和众多二游脚本的存续情况来看，勇士没有封禁脚本的理由。但若确实因为使用此脚本被封号，本人不承担任何责任
 
-综上，欢迎各位发Issues和PR进行指导和修改
+综上，欢迎各位发Issues和PR进行指导和修改，如果有比较复杂的需求或疑问，可以加QQ：1916860236
+
+*我对自己项目的质量和大眼这游戏的热度还是有点数的QwQ要是建群估计没几个人。此外，由上面所说，平常比较忙，可能会忽略一些信息，能用Issue解决的尽量用Issue*
+
 PS：原本的命名想法是将MAA里的Arknights换成AetherGazer，结果发现名字变成了~~某个奇怪的口号~~，于是就改成了这样
 
 ---
@@ -35,7 +39,8 @@ PS：原本的命名想法是将MAA里的Arknights换成AetherGazer，结果发�
 1. 该脚本暂时只支持 **Windows**  ~~等孩子把多系统兼容整明白了再去兼容Mac和Linux~~
 2. 只支持模拟器端（最好为MuMu），暂不支持桌面
 3. **游园街·餐厅** 任务首次使用前，需要在 `custom_task_config\restaurant\player_status.json` 内配置玩家信息：`"level"`: 各个厨具的等级；`"menu_slots"`: 的菜品上架限制；`"warehouse_stock"`: 当前仓库的食材数量
-	==一定要配置！不然崩了别怪我==
+	**目前 游园街·餐厅 Bug较多，等待重构，尽可能不要使用**
+	**一定要配置！不然崩了别怪我**
 
 ---
 ## 图形化界面
@@ -72,13 +77,19 @@ PS：原本的命名想法是将MAA里的Arknights换成AetherGazer，结果发�
 ### 开源库
 
 - [MaaFramework](https://github.com/MaaXYZ/MaaFramework)
+
 	基于图像识别的自动化黑盒测试框架 | An automation black-box testing framework based on image recognition
+
 	本项目的开发框架
 - [MFW-PyQt6](https://github.com/overflow65537/MFW-PyQt6)
+
 	一个基于PySide6的MAAFramework图形化操作界面
+
 	本项目的前端界面
 - [MSBA](https://github.com/overflow65537/MAA_SnowBreak)
+
 	尘白禁区每日任务自动化 | Assistant For Snowbreak: Containment Zone
+
 	本项目的部分代码（[ScreenShot.py](https://github.com/Kazaorus/MAG/blob/main/assets/custom/action/ScreenShot.py)）的来源
 ### 开发者
 

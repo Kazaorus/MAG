@@ -1,0 +1,391 @@
+{
+    "游园街常规任务": {
+        "next": [
+            "游园街面板任务"
+        ],
+        "interrupt": [
+            "进入游园街面板",
+            "进入游园街",
+            "关闭待机页面"
+        ]
+    },
+    "进入游园街面板": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    896,
+                    636,
+                    176,
+                    57
+                ],
+                "expected": [
+                    "游园街面板",
+                    "面板"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "进入游园街": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    965,
+                    625,
+                    86,
+                    78
+                ],
+                "expected": [
+                    "游园街"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "游园街面板任务": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    525,
+                    14,
+                    228,
+                    51
+                ],
+                "expected": [
+                    "游园街面板",
+                    "面板"
+                ]
+            }
+        },
+        "post_delay": 2000,
+        "next": [
+            "游园街·派遣任务",
+            "游园街·领取餐厅收益",
+            "游园街·投喂",
+            "游园街·换班"
+        ]
+    },
+    "游园街·派遣任务": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    262,
+                    405,
+                    851,
+                    58
+                ],
+                "expected": [
+                    "完成"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 2000,
+        "next": [
+            "领取游园街委托奖励"
+        ]
+    },
+    "领取游园街委托奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    398,
+                    231,
+                    496,
+                    57
+                ],
+                "expected": [
+                    "委托",
+                    "已完成"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    644,
+                    659,
+                    1,
+                    1
+                ]
+            }
+        },
+        "post_delay": 2000,
+        "next": [
+            "派遣游园街委托"
+        ]
+    },
+    "派遣游园街委托": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    64,
+                    564,
+                    1119,
+                    66
+                ],
+                "expected": [
+                    "前往",
+                    "任务"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    1155,
+                    671,
+                    1,
+                    1
+                ]
+            }
+        },
+        "post_delay": 2000,
+        "next": [
+            "游园街·领取餐厅收益",
+            "游园街·投喂",
+            "游园街·换班"
+        ],
+        "interrupt": [
+            "点击下方空白"
+        ]
+    },
+    "游园街·领取餐厅收益": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    933,
+                    275,
+                    208,
+                    116
+                ],
+                "expected": [
+                    "领取收益",
+                    "\\d+/\\d+"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 1000,
+        "next": [
+            "游园街·投喂",
+            "游园街·换班"
+        ]
+    },
+    "游园街·投喂": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    967,
+                    631,
+                    220,
+                    60
+                ],
+                "expected": [
+                    "一键投喂",
+                    "..投."
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 1000,
+        "next": [
+            "游园街·换班"
+        ]
+    },
+    "游园街·换班": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    736,
+                    627,
+                    221,
+                    61
+                ],
+                "expected": [
+                    "自动.."
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 2000,
+        "next": [
+            "游园任务",
+            "检查主界面"
+        ],
+        "interrupt": [
+            "返回上级菜单"
+        ]
+    },
+    "游园任务": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    714,
+                    637,
+                    177,
+                    59
+                ],
+                "expected": [
+                    "游园任务",
+                    "..任务"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "领取游园任务",
+            "角色情报界面",
+            "无游园任务奖励"
+        ]
+    },
+    "领取游园任务": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    831,
+                    582,
+                    171,
+                    54
+                ],
+                "expected": [
+                    ".+?领取"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "关闭游园任务界面",
+            "角色情报界面"
+        ],
+        "interrupt": [
+            "关闭游园任务提示",
+            "关闭奖励通知"
+        ]
+    },
+    "关闭游园任务提示": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    588,
+                    217,
+                    107,
+                    50
+                ],
+                "expected": [
+                    "提示"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target_offset": [
+                    249,
+                    324,
+                    0,
+                    0
+                ]
+            }
+        },
+        "post_wait_freezes": 2000
+    },
+    "关闭游园任务界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    239,
+                    94,
+                    123,
+                    53
+                ],
+                "expected": [
+                    ".+?积分"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    624,
+                    701,
+                    1,
+                    1
+                ]
+            }
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "连续返回主菜单"
+        ]
+    },
+    "角色情报界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    529,
+                    150,
+                    223,
+                    42
+                ],
+                "expected": [
+                    "可任选",
+                    "多份奖励"
+                ]
+            }
+        },
+        "next": [
+            "重启游戏"
+        ]
+    },
+    "无游园任务奖励": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    831,
+                    582,
+                    171,
+                    54
+                ],
+                "expected": [
+                    ".+?领取"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    640,
+                    710,
+                    1,
+                    1
+                ]
+            }
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "返回上级菜单"
+        ]
+    }
+}

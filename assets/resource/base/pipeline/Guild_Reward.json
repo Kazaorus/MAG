@@ -1,0 +1,324 @@
+{
+    "公会奖励": {
+        "next": [
+            "领取矩阵补给"
+        ],
+        "interrupt": [
+            "矩阵补给",
+            "进入公会",
+            "关闭待机页面"
+        ]
+    },
+    "进入公会": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    782,
+                    634,
+                    80,
+                    81
+                ],
+                "expected": [
+                    "公会"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    //以下是常规每日补给部分
+    "矩阵补给": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1092,
+                    626,
+                    163,
+                    83
+                ],
+                "expected": [
+                    "矩阵补给"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "领取矩阵补给": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    527,
+                    145,
+                    231,
+                    59
+                ],
+                "expected": [
+                    "矩阵常规补给"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    638,
+                    511,
+                    1,
+                    1
+                ]
+            }
+        },
+        "next": [
+            "直接返回主菜单"
+        ],
+        "interrupt": [
+            "关闭奖励通知",
+            "点击下方空白"
+        ]
+    },
+    //以下是联合攻坚部分
+    "联合攻坚挑战奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    499,
+                    30,
+                    289,
+                    75
+                ],
+                "expected": [
+                    "挑战奖励"
+                ]
+            }
+        },
+        "next": [
+            "联合攻坚奖励领取完毕",
+            "联合攻坚未完成挑战奖励"
+        ],
+        "interrupt": [
+            "关闭奖励通知",
+            "领取联合攻坚奖励"
+        ]
+    },
+    "联合攻坚未完成挑战奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    981,
+                    110,
+                    130,
+                    564
+                ],
+                "expected": [
+                    "未完成"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    1138,
+                    60,
+                    1,
+                    1
+                ]
+            }
+        },
+        "next": [
+            "直接返回主菜单"
+        ]
+    },
+    "进入联合攻坚挑战奖励界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    25,
+                    603,
+                    240,
+                    98
+                ],
+                "expected": [
+                    "挑战奖励"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "进入联合攻坚挑战界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    20,
+                    73,
+                    220,
+                    125
+                ],
+                "expected": [
+                    "联合攻坚"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    646,
+                    377,
+                    1,
+                    1
+                ]
+            }
+        }
+    },
+    "进入联合攻坚": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    939,
+                    84,
+                    283,
+                    128
+                ],
+                "expected": [
+                    "联合攻坚"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "联合攻坚奖励领取完毕": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    981,
+                    110,
+                    130,
+                    564
+                ],
+                "template": [
+                    "联合攻坚/奖励领取完毕.png"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    1138,
+                    60,
+                    1,
+                    1
+                ]
+            }
+        },
+        "next": [
+            "直接返回主菜单"
+        ]
+    },
+    "领取联合攻坚奖励": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    981,
+                    110,
+                    130,
+                    564
+                ],
+                "template": [
+                    "联合攻坚/奖励领取按钮.png"
+                ]
+            }
+        }
+    },
+    //以下是公会任务部分
+    "公会任务": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    940,
+                    650,
+                    143,
+                    45
+                ],
+                "expected": [
+                    "公会任务"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "领取公会任务奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1060,
+                    635,
+                    186,
+                    54
+                ],
+                "expected": [
+                    "领取"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "直接返回主菜单"
+        ],
+        "interrupt": [
+            "关闭奖励通知"
+        ]
+    },
+    "无公会任务奖励": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1060,
+                    635,
+                    186,
+                    54
+                ],
+                "expected": [
+                    "领取"
+                ]
+            }
+        },
+        "next": [
+            "直接返回主菜单"
+        ]
+    },
+    "检测公会任务奖励界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    423,
+                    62,
+                    186,
+                    55
+                ],
+                "expected": [
+                    "公会每周目标"
+                ]
+            }
+        },
+        "next": [
+            "领取公会任务奖励",
+            "无公会任务奖励"
+        ]
+    }
+}

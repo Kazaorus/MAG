@@ -10,9 +10,7 @@ class MarkSuitChoice(CustomAction):
     """
     需要在MaaCustomActionCallback.custom_action_param中传入一个字典，类似：
     {
-        "mark_path": "resource/image/刻印图标",
-        "aim": "得胜者的凯歌",
-        "exit_on_match_failed": false
+        "aim": "得胜者的凯歌"
     }
     """
 
@@ -20,7 +18,7 @@ class MarkSuitChoice(CustomAction):
         # 准备基本参数
         param: Dict = json.loads(argv.custom_action_param)
         aim: str = param["aim"]
-        mark_path: str = os.path.join(os.getcwd(), "resource\\image\\刻印图标")
+        mark_path: str = os.path.join(os.getcwd(), "resource\\base\\image\\刻印图标")
         self._define_basic_tasks(context)
         mark_names: Set[str] = self._load_mark_names(mark_path)
 

@@ -1,0 +1,182 @@
+{
+    "任务": {
+        "next": [
+            "主页角色互动"
+        ],
+        "interrupt": [
+            "关闭待机页面"
+        ]
+    },
+    "主页角色互动": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1105,
+                    47,
+                    148,
+                    81
+                ],
+                "template": "通用操作/主页标志.png"
+            }
+        },
+        "pre_delay": 2000,
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    640,
+                    360,
+                    1,
+                    1
+                ]
+            }
+        },
+        "next": [
+            "进入任务"
+        ]
+    },
+    "进入任务": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1105,
+                    47,
+                    148,
+                    81
+                ],
+                "template": "通用操作/主页标志.png"
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    1052,
+                    79,
+                    1,
+                    1
+                ]
+            }
+        },
+        "next": [
+            "任务界面"
+        ]
+    },
+    "任务界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    21,
+                    86,
+                    184,
+                    60
+                ],
+                "expected": [
+                    "每日任务"
+                ]
+            }
+        },
+        "next": [
+            "每日任务"
+        ]
+    },
+    "领取每日任务奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1051,
+                    632,
+                    212,
+                    71
+                ],
+                "expected": [
+                    "领取"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "领取每日任务奖励",
+            "每周任务"
+        ],
+        "interrupt": [
+            "玩家等级提升",
+            "关闭奖励通知"
+        ]
+    },
+    "每日任务": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    21,
+                    86,
+                    184,
+                    60
+                ],
+                "expected": [
+                    "每日任务"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "领取每日任务奖励",
+            "每周任务"
+        ]
+    },
+    "每周任务": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    20,
+                    169,
+                    183,
+                    58
+                ],
+                "expected": [
+                    "周常任务"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "领取每周任务奖励",
+            "直接返回主菜单"
+        ]
+    },
+    "领取每周任务奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1051,
+                    632,
+                    212,
+                    71
+                ],
+                "expected": [
+                    "领取"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "领取每周任务奖励",
+            "直接返回主菜单"
+        ],
+        "interrupt": [
+            "玩家等级提升",
+            "关闭奖励通知"
+        ]
+    },
+}

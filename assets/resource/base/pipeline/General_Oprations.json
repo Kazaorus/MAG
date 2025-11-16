@@ -1,0 +1,262 @@
+{
+    "关闭奖励通知": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "expected": "获得物品",
+                "roi": [
+                    549,
+                    158,
+                    198,
+                    75
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    640,
+                    700,
+                    1,
+                    1
+                ]
+            }
+        }
+    },
+    "检查主界面": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1105,
+                    47,
+                    148,
+                    81
+                ],
+                "template": "通用操作/主页标志.png"
+            }
+        }
+    },
+    "直接返回主菜单": {
+        "post_wait_freezes": 1000,
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    78,
+                    6,
+                    122,
+                    69
+                ],
+                "template": "通用操作/主菜单.png"
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "next": [
+            "检查主界面",
+            "直接返回主菜单"
+        ],
+        "interrupt": [
+            "关闭奖励通知"
+        ]
+    },
+    "直接返回主菜单_2": {
+        "post_wait_freezes": 1000,
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    78,
+                    6,
+                    122,
+                    69
+                ],
+                "template": "通用操作/主菜单.png"
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "next": [
+            "检查主界面",
+            "直接返回主菜单"
+        ],
+        "interrupt": [
+            "关闭奖励通知"
+        ]
+    },
+    "返回主菜单按钮检测": {
+        "post_wait_freezes": 1000,
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    78,
+                    6,
+                    122,
+                    69
+                ],
+                "template": "通用操作/主菜单.png"
+            }
+        }
+    },
+    "连续返回主菜单": {
+        "post_wait_freezes": 1000,
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    4,
+                    2,
+                    98,
+                    79
+                ],
+                "template": "通用操作/返回.png"
+            }
+        },
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "ContinuouslyClickBack"
+            }
+        },
+        "next": [
+            "检查主界面",
+            "直接返回主菜单"
+        ],
+        "interrupt": [
+            "关闭奖励通知"
+        ]
+    },
+    "返回上级菜单": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    4,
+                    2,
+                    98,
+                    79
+                ],
+                "template": "通用操作/返回.png"
+            }
+        },
+        "action": "Click"
+    },
+    "点击下方空白": {
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    640,
+                    710,
+                    1,
+                    1
+                ]
+            }
+        }
+    },
+    "点击空白后直接退出": {
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    640,
+                    710,
+                    1,
+                    1
+                ]
+            }
+        },
+        "next": [
+            "直接返回主菜单"
+        ]
+    },
+    "玩家等级提升": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    539,
+                    239,
+                    219,
+                    64
+                ],
+                "expected": [
+                    ".{3}等级.."
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "返回主菜单_err": {
+        "focus": {
+            "succeeded": "[color:Tomato]识别错误，返回主菜单[/color]",
+            "aborted": true
+        },
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "ScreenShot",
+                "custom_action_param": {
+                    "type": "ERR"
+                }
+            }
+        },
+        "next": [
+            "检查主界面",
+            "直接返回主菜单",
+            "连续返回主菜单"
+        ],
+        "on_error": [
+            "重启游戏"
+        ]
+    },
+    "重启游戏": {
+        "focus": {
+            "succeeded": "[color:Tomato]未知错误，重启游戏[/color]"
+        },
+        "action": {
+            "type": "StopApp",
+            "param": {
+                "package": "com.yongshi.tenojo.ys"
+            }
+        },
+        "next": [
+            "启动"
+        ]
+    },
+    "关闭待机页面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    898,
+                    543,
+                    353,
+                    144
+                ],
+                "expected": [
+                    "^\\d{1,2}:\\d{1,2}$",
+                    "^\\d{4}/\\d{1,2}/\\d{1,2}$",
+                    "^星期.?$"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    33,
+                    33,
+                    1,
+                    1
+                ]
+            }
+        }
+    },
+    "空白任务": {}
+}

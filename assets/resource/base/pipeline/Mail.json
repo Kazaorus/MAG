@@ -1,0 +1,79 @@
+{
+    "邮件": {
+        "next": [
+            "邮件界面"
+        ],
+        "interrupt": [
+            "进入邮件界面",
+            "关闭待机页面"
+        ]
+    },
+    "进入邮件界面": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1105,
+                    47,
+                    148,
+                    81
+                ],
+                "template": "通用操作/主页标志.png"
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    1097,
+                    81,
+                    1,
+                    1
+                ]
+            }
+        }
+    },
+    "邮件界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    31,
+                    626,
+                    395,
+                    65
+                ],
+                "expected": [
+                    ".{3}信件"
+                ]
+            }
+        },
+        "next": [
+            "领取邮件奖励",
+            "直接返回主菜单"
+        ]
+    },
+    "领取邮件奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    40,
+                    550,
+                    460,
+                    63
+                ],
+                "expected": [
+                    "..领取"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "直接返回主菜单"
+        ],
+        "interrupt": [
+            "关闭奖励通知"
+        ]
+    }
+}

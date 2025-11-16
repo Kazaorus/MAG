@@ -1,8 +1,8 @@
 # Editor and IDE configuration
 .idea/
 .vscode/
+.obsidian/
 *.swp
-README.md
 
 # Dependencies
 node_modules/

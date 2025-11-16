@@ -1,0 +1,120 @@
+{
+  "启动": {
+    "next": "检查主界面_启动",
+    "interrupt": [
+      "关闭奖励通知",
+      "关闭皮肤购买界面",
+      "关闭签到界面",
+      "进入游戏",
+      "启动游戏"
+    ]
+  },
+  "检查主界面_启动": {
+    "recognition": {
+      "type": "TemplateMatch",
+      "param": {
+        "roi": [
+          1105,
+          47,
+          148,
+          81
+        ],
+        "template": "通用操作/主页标志.png"
+      }
+    },
+    "post_delay": 10000,
+    "next": "检查主界面",
+    "interrupt": [
+      "关闭奖励通知",
+      "关闭皮肤购买界面",
+      "关闭签到界面",
+      "进入游戏",
+      "启动游戏"
+    ]
+  },
+  "关闭皮肤购买界面": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          491,
+          643,
+          317,
+          65
+        ],
+        "expected": "点击图片进行跳转"
+      }
+    },
+    "action": {
+      "type": "Click"
+    },
+    "post_delay":2000
+  },
+  "关闭签到界面": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          37,
+          66,
+          226,
+          358
+        ],
+        "expected": [
+          "每日签到",
+          "恒定观测",
+          "限时签到",
+          "百宝箱"
+        ]
+      }
+    },
+    "action": {
+      "type": "Click",
+      "param": {
+        "target": [
+          640,
+          700,
+          1,
+          1
+        ]
+      }
+    }
+  },
+  "进入游戏": {
+    "recognition": {
+      "type": "OCR",
+      "param": {
+        "roi": [
+          470,
+          593,
+          367,
+          58
+        ],
+        "expected": [
+          "点.*?击",
+          "任.*?意",
+          "进.*?入",
+          "游.*?戏"
+        ]
+      }
+    },
+    "action": "Click",
+    "post_delay": 10000
+  },
+  "启动游戏": {
+    "action": {
+      "type": "StartApp",
+      "param": {
+        "package": "com.yongshi.tenojo.ys"
+      }
+    }
+  },
+  "关闭游戏": {
+    "action": {
+      "type": "StopApp",
+      "param": {
+        "package": "com.yongshi.tenojo.ys"
+      }
+    }
+  }
+}

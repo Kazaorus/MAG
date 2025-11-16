@@ -1,0 +1,72 @@
+{
+    "gain_warehouse_category": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    303,
+                    138,
+                    391,
+                    495
+                ],
+                "expected": "^([\\u4e00-\\u9fa5]+|[1-9]\\d*)$"
+            }
+        }
+    },
+    "warehouse_page_turning": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [
+                    473,
+                    625,
+                    0,
+                    0
+                ],
+                "end": [
+                    473,
+                    167,
+                    0,
+                    0
+                ],
+                "duration": 2000,
+                "end_hold": 1000
+            }
+        },
+        "post_delay": 500
+    },
+    "reco_planned_dish": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    303,
+                    136,
+                    384,
+                    511
+                ],
+                "expected": [
+                    "炸醋肉"
+                ]
+            }
+        },
+        "timeout": 3000,
+        "on_error": [
+            "空白任务"
+        ]
+    },
+    "add_planned_dish": {
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    574,
+                    179,
+                    67,
+                    29
+                ]
+            }
+        },
+        "post_wait_freeze": 1000
+    }
+}

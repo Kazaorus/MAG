@@ -1,5 +1,5 @@
 {
-    "version": "v1.0.0",
+    "version": "v1.1.0",
     "name": "MAG",
     "controller": [
         {
@@ -11,7 +11,14 @@
         {
             "name": "官服",
             "path": [
-                "{PROJECT_DIR}/resource"
+                "{PROJECT_DIR}/resource/base"
+            ]
+        },
+        {
+            "name": "B服",
+            "path": [
+                "{PROJECT_DIR}/resource/base",
+                "{PROJECT_DIR}/resource/bilibili"
             ]
         }
     ],
@@ -51,19 +58,6 @@
             "name": "游园街·餐厅",
             "entry": "餐厅任务",
             "doc": "[size:15][color:black]首次使用前，需要在 custom_task_config/restaurant/player_status.json 中填写账号数据：\n\"level\": 各厨具的等级\n\"warehouse_stock\": 各食材的仓库储量[/color][/size]"
-        },
-        {
-            "name": "游园街·训练室",
-            "entry": "训练室任务",
-            "advanced": [
-                "角色",
-                "乐感",
-                "体能",
-                "表现",
-                "情绪",
-                "协调"
-            ],
-            "doc": "[size:15][color:black]如果需要训练多个角色，可以使用逗号隔开多个角色的名字，与此同时，不同角色的训练次数也需要用逗号隔开，不训练的项目需要写为0，不能有空！\n 例如：\n 角色：薇儿丹蒂,瓦吉特\n 乐感：0,2\n 体能：0,0\n 表现：1,1\n 情绪：1,2\n 协调：0,0[/color][/size]"
         },
         {
             "name": "战斗任务",
@@ -122,8 +116,10 @@
     ],
     "option": {
         "奖励类型": {
-            "default_case": "矩阵补给",
             "cases": [
+                {
+                    "name": "矩阵补给"
+                },
                 {
                     "name": "联合攻坚",
                     "pipeline_override": {
@@ -447,6 +443,9 @@
                                 "进入最高级关卡"
                             ]
                         },
+                        "进入最高级关卡": {
+                            "recognition": "DirectHit"
+                        },
                         "进入资源关卡": {
                             "recognition": {
                                 "param": {
@@ -683,6 +682,7 @@
             "field": "刻印类型",
             "type": "string",
             "default": [
+                "告死的渡者",
                 "冥渡的奥波尔",
                 "疾风霸者",
                 "徒花解语",

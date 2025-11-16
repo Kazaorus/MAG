@@ -1,0 +1,501 @@
+{
+    //扫荡通用操作
+    "调至最大扫荡次数": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1209,
+                    546,
+                    47,
+                    56
+                ],
+                "template": [
+                    "战斗任务/最大化扫荡次数.png"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "开始扫荡"
+        ],
+        "on_error": [
+            "直接返回主菜单"
+        ]
+    },
+    "调至指定扫荡次数": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1166,
+                    549,
+                    43,
+                    50
+                ],
+                "template": [
+                    "战斗任务/增加扫荡次数.png"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "已达到最大扫荡次数": {
+        "inverse": true,
+        "timeout": 2000,
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [
+                    1209,
+                    546,
+                    47,
+                    56
+                ],
+                "lower": [
+                    76,
+                    86,
+                    99
+                ],
+                "upper": [
+                    79,
+                    95,
+                    125
+                ],
+                "count": 5
+            }
+        },
+        "on_error": [
+            "空白任务"
+        ]
+    },
+    "已达到目标扫荡次数": {
+        "timeout": 2000,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1028,
+                    558,
+                    109,
+                    27
+                ],
+                "expected": [
+                    "^.?1$"
+                ],
+                "replace": [
+                    [
+                        "X'",
+                        "x1"
+                    ]
+                ]
+            }
+        },
+        "on_error": [
+            "空白任务"
+        ]
+    },
+    "开始扫荡": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    908,
+                    640,
+                    174,
+                    63
+                ],
+                "expected": [
+                    "扫荡",
+                    "扫"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "扫荡完成",
+            "体力耗尽"
+        ],
+        "interrupt": [
+            "确认扫荡"
+        ],
+        "post_wait_freezes": 1000
+    },
+    "确认扫荡": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    842,
+                    595,
+                    96,
+                    36
+                ],
+                "expected": [
+                    "确定"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "扫荡完成": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1088,
+                    629,
+                    167,
+                    72
+                ],
+                "expected": [
+                    "确认"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "调至最小扫荡次数"
+        ],
+        "interrupt": [
+            "玩家等级提升",
+            "扫荡完成"
+        ]
+    },
+    "调至最小扫荡次数": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    907,
+                    549,
+                    47,
+                    45
+                ],
+                "template": [
+                    "战斗任务/最小化扫荡次数.png"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "调至最大扫荡次数"
+        ]
+    },
+    "体力耗尽": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    208,
+                    103,
+                    783,
+                    110
+                ],
+                "expected": [
+                    "冷却剂",
+                    "移转之辉",
+                    "每日补给",
+                    "未知"
+                ]
+            }
+        },
+        "next": [
+            "直接返回主菜单"
+        ],
+        "interrupt": [
+            "点击下方空白"
+        ],
+        "post_wait_freezes": 1000
+    },
+    "选择刻印": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    185,
+                    537,
+                    120,
+                    180
+                ],
+                "template": "战斗任务/选择刻印.png",
+                "threshold": [
+                    0.6
+                ]
+            }
+        },
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "MarkSuitChoice",
+                "custom_action_param": {
+                    "aim": "勇者之证"
+                }
+            }
+        },
+        "next": [
+            "选择刻印后续"
+        ],
+        "on_error": [
+            "点击空白后直接退出"
+        ]
+    },
+    "选择刻印后续": {
+        "next": [
+            "进入联防协议关卡"
+        ]
+    },
+    //进入常规资源本
+    "前往作战": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1105,
+                    47,
+                    148,
+                    81
+                ],
+                "template": "通用操作/主页标志.png"
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    1176,
+                    633,
+                    3,
+                    1
+                ]
+            }
+        },
+        "post_wait_freezes": 2000
+    },
+    "进入物资作战": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    551,
+                    629,
+                    409,
+                    76
+                ],
+                "expected": [
+                    "物资"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "进入刻印作战": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    551,
+                    629,
+                    409,
+                    76
+                ],
+                "expected": [
+                    "刻印"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "寻找资源关卡": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    740,
+                    0,
+                    540,
+                    323
+                ],
+                "expected": [
+                    "\\d+",
+                    "联合",
+                    "战场"
+                ]
+            }
+        },
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [
+                    836,
+                    500,
+                    1,
+                    1
+                ],
+                "end": [
+                    736,
+                    500,
+                    1,
+                    1
+                ],
+                "duration": 1000
+            }
+        },
+        "post_wait_freezes": 1000
+    },
+    "进入资源关卡": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    4,
+                    212,
+                    1270,
+                    382
+                ],
+                "expected": [
+                    "酬金委托",
+                    "金委托"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "进入最高级关卡": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    6,
+                    166,
+                    1274,
+                    391
+                ],
+                "expected": [
+                    "^[\\u4e00-\\u9fa5]{2}\\d?\\-\\d$"
+                ]
+            }
+        },
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "HighestLevelChoice"
+            }
+        },
+        "next": [
+            "可扫荡检测"
+        ],
+        "on_error": [
+            "直接返回主菜单"
+        ]
+    },
+    "可扫荡检测": {
+        "inverse": true,
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [
+                    905,
+                    645,
+                    179,
+                    53
+                ],
+                "lower": [
+                    120,
+                    120,
+                    120
+                ],
+                "upper": [
+                    127,
+                    127,
+                    127
+                ],
+                "count": 10
+            }
+        },
+        "on_error": [
+            "直接返回主菜单"
+        ],
+        "next": [
+            "泛用战斗操作"
+        ]
+    },
+    "泛用战斗操作": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "FightOperation",
+                "custom_action_param": "消耗全部体力"
+            }
+        },
+        "next": [
+            "检查主界面",
+            "直接返回主菜单"
+        ],
+        "on_error": [
+            "直接返回主菜单_2"
+        ]
+    },
+    "进入S级联合特勤关卡": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    6,
+                    166,
+                    1274,
+                    391
+                ],
+                "template": [
+                    "战斗任务/联合特勤_S级.png"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "可扫荡检测"
+        ]
+    },
+    "进入A级联合特勤关卡": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    6,
+                    166,
+                    1274,
+                    391
+                ],
+                "template": [
+                    "战斗任务/联合特勤_A级.png"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "可扫荡检测"
+        ]
+    },
+    "进入B级联合特勤关卡": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    6,
+                    166,
+                    1274,
+                    391
+                ],
+                "template": [
+                    "战斗任务/联合特勤_B级.png"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "可扫荡检测"
+        ]
+    }
+}

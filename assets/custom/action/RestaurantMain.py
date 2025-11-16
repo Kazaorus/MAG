@@ -143,7 +143,7 @@ class ShopScan(CustomAction):
     def run(self, context: Context, argv: CustomAction.RunArg) -> CustomAction.RunResult:
         # 需要在 custom_action_param 中传入 custom_task_config/restaurant 文件夹的路径
         self.define_basic_tasks(context)
-        manager = DataManager(json.loads(argv.custom_action_param))
+        manager = DataManager(os.path.join(os.getcwd(), json.loads(argv.custom_action_param)))
 
         context.run_task("进入餐厅商店")
         shop_stock: Dict[str, Dict[str, int]] = {}
@@ -323,12 +323,19 @@ class ShopPurchase(CustomAction):
                 }
             })
             if recognition_detail is None or not recognition_detail.filterd_results:  # 无结果，翻页后继续
+                context.run_task("push_message", {
+                    "push_message": {
+                        "focus": {
+                            "start": f"[size:20][color:red]无结果[/color][/size]"
+                        }
+                    }
+                })
                 context.run_action("shop_page_turning")
                 page_num += 1
                 continue
             current_demands = [
                 filtered_result for filtered_result in recognition_detail.filterd_results
-                if filtered_result.score > ocr_score_threshold
+                if (filtered_result.score > ocr_score_threshold and filtered_result.text in demands)
             ]
 
             for current_demand in current_demands:
@@ -340,6 +347,13 @@ class ShopPurchase(CustomAction):
                 if target_roi is None:
                     continue  # 跳过无法获取 roi 的项目
 
+                context.run_task("push_message", {
+                    "push_message": {
+                        "focus": {
+                            "start": f"[size:20][color:red]购买{current_demand.text}[/color][/size]"
+                        }
+                    }
+                })
                 context.run_task("click_item", {
                     "click_item": {
                         "action": {
@@ -359,6 +373,7 @@ class ShopPurchase(CustomAction):
             if page_num >= 3:  # 最多下滑两次
                 break
             else:
+                page_num += 1
                 context.run_action("shop_page_turning")
 
         context.run_task("返回上级菜单")
@@ -394,6 +409,13 @@ class RestaurantMainProcess(CustomAction):
         '''1. 菜品上架流程'''
         while True:
             # 扫描商店并决策今日菜谱
+            context.run_task("push_message", {
+                "push_message": {
+                    "focus": {
+                        "start": f"[size:20][color:red]上架开始[/color][/size]"
+                    }
+                }
+            })
             context.run_task("shop_scan")
             optimizer.shop_info_wrought = True
             decision = optimizer.run_optimization()
@@ -411,6 +433,13 @@ class RestaurantMainProcess(CustomAction):
                 break
 
             if demands:  # 购买菜品
+                context.run_task("push_message", {
+                    "push_message": {
+                        "focus": {
+                            "start": f"[size:20][color:red]{demands}[/color][/size]"
+                        }
+                    }
+                })
                 context.run_task("shop_purchase", {
                     "shop_purchase": {
                         "action": {

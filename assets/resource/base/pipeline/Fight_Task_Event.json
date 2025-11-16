@@ -1,0 +1,222 @@
+{
+    "战斗任务": {
+        "next": [
+            "选择刻印"
+        ],
+        "interrupt": [
+            "关闭联防协议Buff",
+            "信息集纳/失序援区",
+            "领取联防协议奖励",
+            "关闭奖励通知",
+            "进入联防协议",
+            "进入联防协议界面",
+            "寻找联防协议",
+            "进入活动界面",
+            "关闭待机页面"
+        ]
+    },
+    //进入联防协议部分
+    "进入联防协议关卡": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    491,
+                    289,
+                    342,
+                    75
+                ],
+                "expected": [
+                    "未知"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "可扫荡检测"
+        ]
+    },
+    "关闭联防协议Buff": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    519,
+                    609,
+                    259,
+                    64
+                ],
+                "expected": [
+                    "空白",
+                    "关闭"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "信息集纳/失序援区": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    834,
+                    625,
+                    437,
+                    79
+                ],
+                "expected": [
+                    "此方"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000
+    },
+    "失序援区/信息集纳": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    834,
+                    625,
+                    437,
+                    79
+                ],
+                "expected": [
+                    "信息"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "进入联防协议": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    288,
+                    643,
+                    167,
+                    56
+                ],
+                "expected": [
+                    "后勤",
+                    "补给"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    1151,
+                    670,
+                    1,
+                    1
+                ]
+            }
+        }
+    },
+    "进入联防协议界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    7,
+                    65,
+                    242,
+                    613
+                ],
+                "expected": [
+                    "联防"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "领取联防协议奖励": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1160,
+                    577,
+                    81,
+                    43
+                ],
+                "template": [
+                    "战斗任务/联防协议奖励.png"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target_offset": [
+                    -10,
+                    0,
+                    0,
+                    0
+                ]
+            }
+        }
+    },
+    "寻找联防协议": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    4,
+                    2,
+                    98,
+                    79
+                ],
+                "template": "通用操作/返回.png"
+            }
+        },
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [
+                    106,
+                    640,
+                    1,
+                    1
+                ],
+                "end": [
+                    106,
+                    115,
+                    1,
+                    1
+                ],
+                "duration": 2000,
+                "end_hold": 1000
+            }
+        }
+    },
+    "进入活动界面": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1105,
+                    47,
+                    148,
+                    81
+                ],
+                "template": "通用操作/主页标志.png"
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    1134,
+                    203,
+                    1,
+                    1
+                ]
+            }
+        }
+    }
+}
