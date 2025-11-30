@@ -1,26 +1,18 @@
 from maa.context import Context
 from maa.custom_action import CustomAction
 from maa.define import Rect, RecognitionDetail
-from pathlib import Path
-from typing import Dict, Any
+from RestaurantOptimization import RestaurantOptimizer
+from typing import Dict
 import numpy as np
-import time
 import json
-import sys
 import os
 
-# 由于MFW的缺陷，在导入自定义模块时需要使用sys将MFW.exe所在目录加入sys.path，并从该路径导入模块
-# 以下导入路径仅适用打包后的代码
-current_file = Path(__file__).resolve()
-sys.path.append(str(current_file.parent.parent.parent))
-from custom.action.RestaurantOptimization import RestaurantOptimizer
 
 class RestaurantMainProcess(CustomAction):
     """传入决策过程需要最大化收益的时间: float"""
     def run(self, context: Context, argv: CustomAction.RunArg) -> CustomAction.RunResult | bool:
         absolute_config_path: str = os.path.join(os.getcwd(), "custom_task_config\\restaurant")
         empty_pix: np.ndarray[tuple[int, int, int], np.uint8] = np.zeros((1,1,3), dtype=np.uint8)
-        self.define_basic_tasks(context)
         warehouse_storage = self.decode_scanning_results(context.run_recognition("warehouse_scan", empty_pix))
         shop_storage = self.decode_scanning_results(context.run_recognition("shop_scan", empty_pix))
 
@@ -30,8 +22,12 @@ class RestaurantMainProcess(CustomAction):
         except (json.decoder.JSONDecodeError, ValueError):
             optimizer = RestaurantOptimizer(absolute_config_path, warehouse_storage, shop_storage)
 
+        self.define_basic_tasks(context)
+
         '''上架流程'''
         while True:
+            context.run_task("shop_scan")
+            optimizer.shop_info_wrought = True
             solutions, demands = optimizer.find_best_solution()
 
             if not solutions:
@@ -50,10 +46,10 @@ class RestaurantMainProcess(CustomAction):
                         "on_error": ["返回上级菜单"]
                     }
                 })
-
-            # 上架菜品
             context.run_task("进入今日菜单")
             context.run_task("下架菜品任务")
+
+            # 上架菜品
             for solution in solutions:
                 context.run_task("choose_cooker", {
                     "choose_cooker": {
@@ -112,7 +108,6 @@ class RestaurantMainProcess(CustomAction):
                             }
                         })
                         context.run_task("add_dish")
-                        time.sleep(3)
                         break
                 else:  # 菜品未找到，发送信息至操作界面
                     self.push_message(context, f"菜品 {solution.dish.name} 未找到")
@@ -120,6 +115,9 @@ class RestaurantMainProcess(CustomAction):
             # 上架菜品流程结束，退出菜谱界面和外层while循环
             context.run_action("点击下方空白")
             break
+
+        '''仓库扫描流程'''
+        context.run_task("warehouse_scan")
 
         '''餐厅任务完成，退出至主页'''
         context.run_task("直接返回主菜单")
@@ -136,7 +134,7 @@ class RestaurantMainProcess(CustomAction):
         return {}
 
     @staticmethod
-    def push_message(context: Context, message: Any, text_size: int = 20, text_color: str="red"):
+    def push_message(context: Context, message: str, text_size: int = 20, text_color: str="red"):
         context.run_task("push_message", {
             "push_message": {
                 "focus": {
@@ -150,18 +148,18 @@ class RestaurantMainProcess(CustomAction):
         # 定义餐厅自定义任务
         context.override_pipeline({
             "shop_scan": {
-                "recognition": {
+                "action": {
                     "type": "Custom",
                     "param": {
-                        "custom_recognition": "ShopScan"
+                        "custom_action": "ShopScan"
                     }
                 }
             },
             "warehouse_scan": {
-                "recognition": {
+                "action": {
                     "type": "Custom",
                     "param": {
-                        "custom_recognition": "WarehouseScan"
+                        "custom_action": "WarehouseScan"
                     }
                 }
             },
@@ -185,6 +183,6 @@ class RestaurantMainProcess(CustomAction):
                     }
                 },
                 "action": "Click",
-                "post_wait_freeze": 2000
+                "post_wait_freeze": 1000
             }
         })

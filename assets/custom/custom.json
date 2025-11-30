@@ -5,19 +5,19 @@
         "file_path": "{custom_path}/action/ContinuouslyClickBack.py"
     },
     "WarehouseScan": {
-        "type": "action",
+        "type": "recognition",
         "class": "WarehouseScan",
-        "file_path": "{custom_path}/action/RestaurantMain.py"
+        "file_path": "{custom_path}/recognition/RestaurantAssistant.py"
     },
     "ShopScan": {
-        "type": "action",
+        "type": "recognition",
         "class": "ShopScan",
-        "file_path": "{custom_path}/action/RestaurantMain.py"
+        "file_path": "{custom_path}/recognition/RestaurantAssistant.py"
     },
     "ShopPurchase": {
         "type": "action",
         "class": "ShopPurchase",
-        "file_path": "{custom_path}/action/RestaurantMain.py"
+        "file_path": "{custom_path}/recognition/RestaurantAssistant.py"
     },
     "RestaurantMainProcess": {
         "type": "action",

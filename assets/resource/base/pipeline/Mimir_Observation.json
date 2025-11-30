@@ -49,7 +49,8 @@
                     1
                 ]
             }
-        }
+        },
+        "post_wait_freezes": 1000
     },
     "领取委托奖励": {
         "recognition": {
@@ -93,7 +94,8 @@
         },
         "action": {
             "type": "Click"
-        }
+        },
+        "post_wait_freezes": 1000
     },
     "进入进入弥弥观测站前置页面": {
         "recognition": {
@@ -110,7 +112,8 @@
         },
         "action": {
             "type": "Click"
-        }
+        },
+        "post_wait_freezes": 1000
     },
     "关闭委托奖励页面": {
         "recognition": {

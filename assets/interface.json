@@ -64,6 +64,9 @@
         {
             "name": "游园街·餐厅",
             "entry": "餐厅任务",
+            "advanced":[
+                "上架时间"
+            ],
             "doc": "[size:15][color:black]首次使用前，需要在 custom_task_config/restaurant/player_status.json 中填写账号数据：\n\"level\": 各厨具的等级\n\"warehouse_stock\": 各食材的仓库储量[/color][/size]"
         },
         {
@@ -841,6 +844,26 @@
                         "type": "Custom",
                         "param": {
                             "custom_action_param": "{战斗次数}"
+                        }
+                    }
+                }
+            }
+        },
+        "上架时间":{
+            "field": "上架时间",
+            "type":"String",
+            "default": [
+                "24",
+                "48",
+                "72",
+                "96"
+            ],
+            "pipeline_override":{
+                "餐厅主要任务":{
+                    "action": {
+                        "type": "Custom",
+                        "param": {
+                            "custom_action_param": "{上架时间}"
                         }
                     }
                 }

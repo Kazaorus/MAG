@@ -4,11 +4,7 @@ from dataclasses import dataclass
 import os
 import json
 
-"""
-再次重构：
-将仓库扫描和商店扫描移至流程前端并改为CustomRecognition，将其得出的结果直接在MainProcess中导入Optimizer
-从而解除对json的依赖
-"""
+
 @dataclass
 class Dish:
     """菜品类"""
@@ -35,6 +31,9 @@ class MenuSolution:
     count: int  # 上架数量
     bar_ratio: float  # 需要拖动的进度条比例
 
+    def __repr__(self):
+        return f"上架 {self.dish.name} {self.count}份，比例{self.bar_ratio:.2f}"
+
 
 class RestaurantOptimizer:
     def __init__(self,
@@ -50,6 +49,7 @@ class RestaurantOptimizer:
         self.data_path = data_path
         self.time_limit = int(time_limit * 60)  # 转换为分钟
         self.max_slots = max_slots
+        self.purchasable_ingredients = shop_storage
 
         levels, ingredient_names = self._load_levels_and_ingredients()
         self.unlocked_dishes = [
@@ -110,13 +110,25 @@ class RestaurantOptimizer:
         current_ingredients = available_ingredients.copy()
 
         for ingredient, required_amount in dish.ingredients.items():
+            if required_amount <= 0:
+                continue
+                
             current_amount = current_ingredients.get(ingredient, 0)
-            remaining_amount = current_amount - required_amount * count
-            if remaining_amount < 0: remaining_amount = 0
-            current_ratio = (current_amount - remaining_amount) / current_amount
-
+            # 计算当前食材可以制作的最大数量
+            max_makeable = current_amount // required_amount
+            
+            if max_makeable > 0:
+                # 进度条比例 = 实际制作数量 / 最大可制作数量
+                current_ratio = count / max_makeable
+            else:
+                current_ratio = 0
+            
             # 可制作的数量取决于短板（剩余最少的食材），其对应的进度条比例最大
             ratio = max(current_ratio, ratio)
+            
+            # 更新剩余食材
+            remaining_amount = current_amount - required_amount * count
+            if remaining_amount < 0: remaining_amount = 0
             current_ingredients[ingredient] = remaining_amount
 
         return ratio, current_ingredients
@@ -227,7 +239,8 @@ class RestaurantOptimizer:
             solutions.append(MenuSolution(dish, count, ratio))
 
             for ingredient_name in dish.ingredients.keys():
-                required_ingredient_names.add(ingredient_name)
+                if ingredient_name in self.purchasable_ingredients.keys():
+                    required_ingredient_names.add(ingredient_name)
 
         return solutions, required_ingredient_names
         
