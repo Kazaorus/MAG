@@ -33,7 +33,7 @@
     },
     "饺子皮": {
         "shop_daily_limit": 100,
-        "shop_price": 1
+        "shop_price": 4
     },
     "虾仁": {
         "shop_daily_limit": 100,
@@ -53,7 +53,7 @@
     },
     "禽肉": {
         "shop_daily_limit": 200,
-        "shop_price": 1
+        "shop_price": 7
     },
     "鱼肉": {
         "shop_daily_limit": 200,

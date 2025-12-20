@@ -1,0 +1,195 @@
+{
+    "adb": {
+        "adb_path": "F:/MuMu Player 12/shell/adb.exe",
+        "address": "127.0.0.1:16512",
+        "input_method": 0,
+        "screen_method": 0,
+        "config": {
+            "extras": {
+                "mumu": {
+                    "enable": true,
+                    "index": 4,
+                    "path": "F:/MuMu Player 12"
+                }
+            }
+        }
+    },
+    "win32": {
+        "hwnd": 0,
+        "input_method": 0,
+        "screen_method": 0
+    },
+    "controller": {
+        "name": "安卓端_Adb"
+    },
+    "gpu": -1,
+    "resource": "官服",
+    "task": [
+        {
+            "name": "启动",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "弥弥观测站",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "邮件",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "商店免费体力",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "定时体力补给",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "战斗任务",
+            "option": [
+                {
+                    "name": "关卡类型",
+                    "value": "技能升级材料·神力因子"
+                },
+                {
+                    "name": "战斗次数",
+                    "value": "消耗全部体力",
+                    "advanced": "战斗次数"
+                },
+                {
+                    "name": "刻印类型",
+                    "value": "告死的渡者",
+                    "advanced": "选择刻印类型"
+                }
+            ],
+            "speedrun": {},
+            "advanced": true
+        },
+        {
+            "name": "战斗任务",
+            "option": [
+                {
+                    "name": "关卡类型",
+                    "value": "联防协议·失序援区·未知"
+                },
+                {
+                    "name": "战斗次数",
+                    "value": "消耗全部体力",
+                    "advanced": "战斗次数"
+                },
+                {
+                    "name": "刻印类型",
+                    "value": "告死的渡者",
+                    "advanced": "选择刻印类型"
+                }
+            ],
+            "speedrun": {},
+            "advanced": true
+        },
+        {
+            "name": "商店购买",
+            "option": [
+                {
+                    "name": "商品种类",
+                    "value": "每日采购·物资商品"
+                }
+            ],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "游园街·常规",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "游园街·餐厅",
+            "option": [
+                {
+                    "name": "上架时间",
+                    "value": "48",
+                    "advanced": "上架时间"
+                }
+            ],
+            "speedrun": {},
+            "advanced": true
+        },
+        {
+            "name": "公会奖励",
+            "option": [
+                {
+                    "name": "奖励类型",
+                    "value": "矩阵补给"
+                }
+            ],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "公会奖励",
+            "option": [
+                {
+                    "name": "奖励类型",
+                    "value": "联合攻坚"
+                }
+            ],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "任务",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "公会奖励",
+            "option": [
+                {
+                    "name": "奖励类型",
+                    "value": "公会任务"
+                }
+            ],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "对策协议",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        },
+        {
+            "name": "关闭游戏",
+            "option": [],
+            "speedrun": {},
+            "advanced": false
+        }
+    ],
+    "finish_option": 3,
+    "finish_option_res": 0,
+    "finish_option_cfg": 0,
+    "run_before_start": "",
+    "run_before_start_args": "",
+    "run_after_finish": "",
+    "run_after_finish_args": "",
+    "emu_path": "F:/MuMu Player 12/nx_main/MuMuNxMain.exe",
+    "emu_args": "-v 4",
+    "emu_wait_time": "20",
+    "exe_path": "",
+    "exe_args": "",
+    "exe_wait_time": 10,
+    "know_task": null
+}

@@ -1,0 +1,98 @@
+{
+    "MFW": {
+        "MFW_update_channel": 0,
+        "resource_update_channel": 0
+    },
+    "program": {
+        "cdk": "",
+        "agent_path": "",
+        "force_update": false,
+        "hide_notice": false,
+        "is_change_cdk": true,
+        "recording": false,
+        "resource_exist": true,
+        "run_after_startup": true,
+        "run_after_startup_arg": false,
+        "save_draw": false,
+        "show_agent_cmd": false,
+        "show_notice": false
+    },
+    "Notice": {
+        "DingTalk_secret": "",
+        "DingTalk_status": false,
+        "DingTalk_url": "",
+        "Lark_secret": "",
+        "Lark_status": false,
+        "Lark_url": "",
+        "QYWX_key": "",
+        "QYWX_status": false,
+        "Qmsg_key": "",
+        "Qmsg_robot_qq": "",
+        "Qmsg_sever": "",
+        "Qmsg_status": false,
+        "Qmsg_uesr_qq": "",
+        "SMTP_password": "",
+        "SMTP_receive_mail": "",
+        "SMTP_send_mail": "",
+        "SMTP_sever_address": "",
+        "SMTP_sever_port": "25",
+        "SMTP_status": false,
+        "SMTP_used_ssl": false,
+        "SMTP_uesr_name": "",
+        "WxPusher_SPT_token": "",
+        "WxPush_status": false
+    },
+    "Maa": {
+        "auto_update_MFW": false,
+        "auto_update_resource": false,
+        "force_github": false,
+        "maa_config_list": {
+            "MAG": {
+                "default": "F:\\MAGTemp\\MFW-PyQt6\\dist\\MFW\\config\\MAG\\config\\default\\maa_pi_config.json"
+            }
+        },
+        "Maa_config_name": "default",
+        "Maa_config_path": "F:\\MAGTemp\\MFW-PyQt6\\dist\\MFW\\config\\MAG\\config\\default\\maa_pi_config.json",
+        "maa_resource_list": {
+            "MAG": "F:\\MAGTemp\\MFW-PyQt6\\dist\\MFW"
+        },
+        "Maa_resource_name": "MAG",
+        "Maa_resource_path": "F:\\MAGTemp\\MFW-PyQt6\\dist\\MFW",
+        "start_complete": true,
+        "update_ui_failed": false
+    },
+    "Material": {
+        "AcrylicBlurRadius": 15
+    },
+    "Update": {
+        "CheckUpdateAtStartUp": true
+    },
+    "MainWindow": {
+        "DpiScale": "Auto",
+        "Language": "zh_CN",
+        "MicaEnabled": true,
+        "Title": ""
+    },
+    "QFluentWidgets": {
+        "FontFamilies": [
+            "Segoe UI",
+            "Microsoft YaHei",
+            "PingFang SC"
+        ],
+        "ThemeColor": "#ff009faa",
+        "ThemeMode": "Auto"
+    },
+    "proxy": {
+        "http_proxy": "",
+        "proxy": 0,
+        "socks5_proxy": ""
+    },
+    "Notice_setting": {
+        "when_connect_failed": false,
+        "when_connect_success": false,
+        "when_post_task": false,
+        "when_start_up": false,
+        "when_task_failed": true,
+        "when_task_finished": true
+    }
+}
