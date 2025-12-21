@@ -5,6 +5,7 @@ docs/.vuepress/.temp
 *.d
 
 # Compiled Object files
+.gitignore
 build
 build-*
 *.slo
@@ -473,8 +474,6 @@ interface.json
 interface.jsonc
 interface_en.json
 interface_zh.json
-resource
 release_notes
 runtime
-custom
 .obsidian
