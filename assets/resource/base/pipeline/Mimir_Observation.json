@@ -1,0 +1,220 @@
+{
+    "弥弥观测站": {
+        "next": [
+            "领取委托奖励",
+            "观测站_探索中",
+            "[JumpBack]派遣进程",
+            "[JumpBack]本周探索已开启",
+            "[JumpBack]进入弥弥观测站",
+            "[JumpBack]进入进入弥弥观测站前置页面",
+            "[JumpBack]关闭待机页面"
+        ]
+    },
+    "观测站_探索中": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    309,
+                    67,
+                    780,
+                    390
+                ],
+                "expected": [
+                    "探索中"
+                ]
+            }
+        },
+        "next": [
+            "直接返回主菜单"
+        ]
+    },
+    "本周探索已开启":{
+        "recognition":{
+            "type":"OCR",
+            "param":{
+                "roi":[514, 282, 377, 92],
+                "expected":["本周探索已开启"]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    640,
+                    710,
+                    1,
+                    1
+                ]
+            }
+        },
+        "post_wait_freezes": 1000
+    },
+    "领取委托奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    853,
+                    593,
+                    216,
+                    104
+                ],
+                "expected": [
+                    "领取"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "next": [
+            "派遣进程",
+            "[JumpBack]关闭委托奖励页面"
+        ]
+    },
+    "进入弥弥观测站": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1006,
+                    254,
+                    127,
+                    123
+                ],
+                "expected": [
+                    "弥弥观测站"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000
+    },
+    "进入进入弥弥观测站前置页面": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1105,
+                    47,
+                    148,
+                    81
+                ],
+                "template": "通用操作/主页标志.png"
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000
+    },
+    "关闭委托奖励页面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    484,
+                    491,
+                    335,
+                    108
+                ],
+                "expected": [
+                    "点击空白处继续"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        }
+    },
+    "派遣进程": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    853,
+                    593,
+                    216,
+                    104
+                ],
+                "expected": [
+                    "派遣"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 1000,
+        "next": [
+            "堆栈递归",
+            "直接返回主菜单"
+        ]
+    },
+    "堆栈递归": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1098,
+                    569,
+                    129,
+                    106
+                ],
+                "expected": [
+                    "10"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 3000,
+        "next": [
+            "开启演算"
+        ]
+    },
+    "开启演算": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    848,
+                    283,
+                    183,
+                    159
+                ],
+                "expected": [
+                    "开启",
+                    "演算"
+                ]
+            }
+        },
+        "pre_delay": 500,
+        "action": "Click",
+        "post_delay":5000,
+        "next":["领取演算奖励"]
+    },
+    "领取演算奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    499,
+                    264,
+                    288,
+                    189
+                ],
+                "expected": [
+                    "数据初始化",
+                    "递归演算中"
+                ]
+            }
+        },
+        "pre_delay": 500,
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "直接返回主菜单"
+        ]
+    }
+}

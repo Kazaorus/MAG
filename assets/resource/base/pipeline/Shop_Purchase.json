@@ -1,0 +1,284 @@
+{
+    "商店": {
+        "next": [
+            "每日采购",
+            "[JumpBack]交易区",
+            "[JumpBack]进入商店"
+        ]
+    },
+    "交易区": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    2,
+                    602,
+                    241,
+                    101
+                ],
+                "expected": [
+                    "交易区"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000
+    },
+    //物资商品部分
+    "每日采购": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    19,
+                    76,
+                    202,
+                    344
+                ],
+                "expected": [
+                    "每日采购"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500,
+        "next": [
+            "物资商品购买流程",
+            "[JumpBack]商店_寻找物资商品"
+        ]
+    },
+    "商店_寻找物资商品": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    227,
+                    82,
+                    216,
+                    342
+                ],
+                "expected": [
+                    "物资.+"
+                ]
+            }
+        },
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [
+                    640,
+                    619,
+                    0,
+                    0
+                ],
+                "end": [
+                    640,
+                    91,
+                    0,
+                    0
+                ],
+                "duration": 1000
+            }
+        },
+        "post_wait_freezes": 500
+    },
+    "物资商品购买流程": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    227,
+                    82,
+                    216,
+                    342
+                ],
+                "expected": [
+                    "物资.+"
+                ]
+            }
+        },
+        "post_wait_freezes": 500,
+        "next": [
+            "物资商品购买"
+        ]
+    },
+    /*
+    检测金币图像，默认排序从左到右，已经购买的物品会排到最右侧
+    默认点击最左侧物品，若点击该物品后仍无法进入二级界面（含有“最大”），表明所有物品售罄，直接退出
+    */
+    "物资商品购买": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    210,
+                    533,
+                    1070,
+                    112
+                ],
+                "expected": [
+                    "\\d{3,4}"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "商店_选择最大_物资",
+            "直接返回主菜单"
+        ]
+    },
+    "商店_选择最大_物资": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    812,
+                    475,
+                    262,
+                    55
+                ],
+                "expected": [
+                    "最大",
+                    ".大"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500,
+        "next": [
+            "商店_物资购买"
+        ]
+    },
+    "商店_物资购买": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    812,
+                    475,
+                    262,
+                    55
+                ],
+                "expected": [
+                    "购买"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500,
+        "next": [
+            "物资商品购买"
+        ]
+    },
+    //公会商店部分
+    "交易中心": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    19,
+                    76,
+                    202,
+                    344
+                ],
+                "expected": [
+                    "交易中心"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500,
+        "next": [
+            "矩阵供应"
+        ]
+    },
+    "矩阵供应": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    791,
+                    73,
+                    187,
+                    61
+                ],
+                "expected": [
+                    "矩阵供应"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500,
+        "next": [
+            "公会商品购买"
+        ]
+    },
+    "公会商品购买": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    244,
+                    140,
+                    1002,
+                    495
+                ],
+                "expected": [
+                    "高级赋能模块",
+                    "高级.+模块"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500,
+        "next": [
+            "商店_选择最大_公会商店",
+            "直接返回主菜单"
+        ]
+    },
+    "商店_选择最大_公会商店": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    812,
+                    475,
+                    262,
+                    55
+                ],
+                "expected": [
+                    "最大",
+                    ".大"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500,
+        "next": [
+            "商店_物资购买"
+        ]
+    },
+    "商店_公会商店购买": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    812,
+                    475,
+                    262,
+                    55
+                ],
+                "expected": [
+                    "购买"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500,
+        "next": [
+            "直接返回主菜单"
+        ]
+    }
+}

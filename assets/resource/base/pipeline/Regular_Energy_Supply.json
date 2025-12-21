@@ -1,0 +1,118 @@
+{
+    "定时体力补给": {
+        "next": [
+            "切换至每日补给",
+            "[JumpBack]进入体力补给",
+            "[JumpBack]关闭待机页面"
+        ]
+    },
+    "进入体力补给": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    668,
+                    7,
+                    86,
+                    59
+                ],
+                "expected": "^\\d+/\\d+$"
+            }
+        },
+        "action": "Click"
+    },
+    "切换至每日补给": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    759,
+                    88,
+                    231,
+                    74
+                ],
+                "expected": [
+                    "每日补给"
+                ]
+            }
+        },
+        "action": "Click",
+        "next": [
+            "领取上午体力",
+            "领取下午体力",
+            "检查主界面",
+            "[JumpBack]点击下方空白"
+        ]
+    },
+    "领取上午体力": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "expected": [
+                    "已领取",
+                    "领取"
+                ],
+                "roi": [
+                    625,
+                    336,
+                    171,
+                    83
+                ]
+            }
+        },
+        "pre_delay": 1000,
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    714,
+                    388,
+                    1,
+                    1
+                ]
+            }
+        },
+        "post_delay": 2000,
+        "next": [
+            "领取下午体力",
+            "检查主界面",
+            "[JumpBack]点击下方空白"
+        ]
+    },
+    "领取下午体力": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "expected": [
+                    "已领取",
+                    "领取"
+                ],
+                "roi": [
+                    885,
+                    340,
+                    167,
+                    78
+                ]
+            }
+        },
+        "pre_delay": 1000,
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    969,
+                    391,
+                    1,
+                    1
+                ]
+            }
+        },
+        "post_delay": 4000,
+        "next": [
+            "检查主界面",
+            "[JumpBack]点击下方空白"
+        ]
+    }
+}
