@@ -653,6 +653,20 @@
                     }
                 },
                 {
+                    "name": "无罪之罪者",
+                    "pipeline_override": {
+                        "选择刻印": {
+                            "action": {
+                                "param": {
+                                    "custom_action_param": {
+                                        "aim": "无罪之罪者"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                {
                     "name": "告死的渡者",
                     "pipeline_override": {
                         "选择刻印": {
