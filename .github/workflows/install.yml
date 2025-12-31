@@ -154,7 +154,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MPA-${{ matrix.platform }}-${{ matrix.arch }}
+          name: MAG-${{ matrix.platform }}-${{ matrix.arch }}
           path: "install"
 
   release:
