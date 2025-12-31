@@ -138,8 +138,8 @@ jobs:
           fileName: "MFW-PyQt6-${{ matrix.platform }}-${{ matrix.arch }}*"
           out-file-path: "install"
           extract: true
-          latest: true
-          #tag: "v4.0.0-beta.1"
+          #latest: true
+          tag: "v4.1.16"
 
       - name: Install MFW
         shell: bash
