@@ -320,3 +320,12 @@ if os.path.exists(assets_src):
         print(f"[WARN] Assets folder is empty: {assets_src}")
 else:
     print(f"[WARN] Assets folder not found: {assets_src}")
+
+
+# === 移动热更新标志 ===
+hotfix_flag_src = os.path.join(os.getcwd(), "update_flag.txt")
+hotfix_flag_dst = os.path.join(os.getcwd(), "dist", "MFW", "update_flag.txt")
+if os.path.exists(hotfix_flag_src):
+    shutil.copy2(hotfix_flag_src, hotfix_flag_dst)
+else:
+    print(f"[WARN] Hotfix flag not found: {hotfix_flag_src}")
