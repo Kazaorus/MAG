@@ -18,8 +18,8 @@ def install_resource():
     )
 
     shutil.copy2(
-        working_dir / "logo.png",
-        install_path / "logo.png",
+        working_dir / "logo.ico",
+        install_path / "logo.ico",
     )
     shutil.copy2(
         working_dir / "update_flag.txt",
