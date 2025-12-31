@@ -5,10 +5,18 @@ on:
     tags:
       - "v*"
     branches:
-      - main 
-  pull_request:  
-    branches:    
-      - main    
+      - "**"
+    paths:
+      - ".github/workflows/install.yml"
+      - "assets/**"
+      - "**.py"
+  pull_request:
+    branches:
+      - "**"
+    paths:
+      - ".github/workflows/install.yml"
+      - "assets/**"
+      - "**.py"
   workflow_dispatch:
 
 jobs:
@@ -78,124 +86,81 @@ jobs:
       is_release: ${{ steps.set_tag.outputs.is_release }}
       is_prerelease: ${{ steps.set_tag.outputs.is_prerelease }}
 
-  pyinstaller:
+  build:
     needs: meta
-    name: Build (${{ matrix.platform }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: macos-15-intel
-            platform: macos
-            arch: x86_64 
-            target_arch: x86_64
-            python_arch: x64
-
-          - os: macos-latest
-            platform: macos
-            arch: aarch64  
-            target_arch: arm64
-            python_arch: arm64
-
-          - os: ubuntu-latest
-            platform: linux
-            arch: x86_64
-            target_arch: x86_64
-            python_arch: x64
-
-          - os: ubuntu-24.04-arm
-            platform: linux
+          - os: windows-latest
+            platform: win
             arch: aarch64
-            target_arch: arm64
-            python_arch: arm64
-            
           - os: windows-latest
             platform: win
             arch: x86_64
-            target_arch: x86_64
-            python_arch: x64
-            
-          - os: windows-11-arm
-            platform: win
+          - os: ubuntu-latest
+            platform: linux
             arch: aarch64
-            target_arch: arm64
-            python_arch: arm64
-
-      fail-fast: false
+          - os: ubuntu-latest
+            platform: linux
+            arch: x86_64
+          - os: macos-latest
+            platform: macos
+            arch: aarch64
+          - os: macos-latest
+            platform: macos
+            arch: x86_64
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
- 
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.12'
-          architecture: ${{ matrix.python_arch }}
 
-      - name: Install dependencies (Windows ARM64)
-        if: matrix.platform == 'win' && matrix.arch == 'aarch64'
+      - name: Install
+        shell: bash
         run: |
-          #$env:CRYPTOGRAPHY_DONT_BUILD_RUST=1
-          ## 安装 vcpkg 并获取 OpenSSL（cryptography 依赖）
-          #git clone https://github.com/microsoft/vcpkg.git ${{ github.workspace }}\vcpkg
-          #${{ github.workspace }}\vcpkg\bootstrap-vcpkg.bat
-          #${{ github.workspace }}\vcpkg\vcpkg install openssl:arm64-windows-static-md
-          #$env:OPENSSL_DIR = "${{ github.workspace }}\vcpkg\installed\arm64-windows-static-md"  # 告知 cryptography 依赖位置
-
-          ## 升级 pip 并安装基础工具
-          #python -m pip install --upgrade pip
-          #python -m pip install setuptools wheel maturin  # maturin 用于 Rust-Python 混合编译
-
-          ## 安装 Rust 工具链并指定 ARM64 目标
-          #curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable-aarch64-pc-windows-msvc
-          #$env:PATH += ";$HOME\.cargo\bin"
-          
-          # 安装其他依赖
           python -m pip install pyinstaller
-          python -m pip install -r ./requirements.txt
-        shell: pwsh
+          python -m pip install -r requirements.txt
+          python -m pip install json-with-comments
+          python ./install.py ${{ needs.meta.outputs.tag }}
 
-      - name: Install dependencies (macos)
-        if: matrix.platform == 'macos'
-        run: |
-          uname -m
-          if [[ ${{ matrix.arch }} == "x86_64" ]]; then
-            arch -x86_64 python -m pip install --force-reinstall --no-cache-dir pyinstaller -r requirements.txt
-          elif [[ ${{ matrix.arch }} == "aarch64" ]]; then
-            arch -arm64 python -m pip install --force-reinstall --no-cache-dir pyinstaller -r requirements.txt
-          fi
-
-      - name: Install dependencies (other)
-        if: matrix.platform != 'macos' && !(matrix.platform == 'win' && matrix.arch == 'aarch64')
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pyinstaller
-          python -m pip install -r ./requirements.txt
-
-      - name: Install(macos)
-        if: matrix.platform == 'macos'
-        run: |
-          sudo python ./build_pyinstaller.py ${{ matrix.platform }} ${{ matrix.arch }} ${{ needs.meta.outputs.tag }}
-
-
-      - name: Install(other)
-        if: matrix.platform != 'macos'
-        run: |
-          python ./build_pyinstaller.py ${{ matrix.platform }} ${{ matrix.arch }} ${{ needs.meta.outputs.tag }}
-        shell: pwsh  
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Download MFW
+        uses: robinraju/release-downloader@v1
         with:
-          name: MFW-PyQt6-${{ matrix.platform }}-${{ matrix.arch }}
-          path: "dist/MFW/"
+          repository: overflow65537/MFW-PyQt6
+          fileName: "MFW-PyQt6-${{ matrix.platform }}-${{ matrix.arch }}*"
+          out-file-path: "install"
+          extract: true
+          latest: true
+          #tag: "v4.0.0-beta.1"
 
+      - name: Install MFW
+        shell: bash
+        run: |
+          rm install/MFW-PyQt6-${{ matrix.platform }}-${{ matrix.arch }}*
+
+
+      - name: Download background image
+        shell: bash
+        run: |
+          curl -L -o install/background.png "https://media-cdn-zspms.kurogame.com/pnswebsite/website2.0/images/1764000000000/skoi7dbbzdwogxvnin-176404371364016.png"
+
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MPA-${{ matrix.platform }}-${{ matrix.arch }}
+          path: "install"
 
   release:
     if: ${{ needs.meta.outputs.is_release == 'true' }}
-    needs: [meta, pyinstaller,changelog]
+    needs: [meta, build, changelog]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -205,7 +170,14 @@ jobs:
       - run: |
           cd assets
           for f in *; do
-            (cd $f && zip -r ../$f-${{ needs.meta.outputs.tag }}.zip .)
+            if [[ $f == *"macos"* ]]; then
+              find $f -type f -name "maapicli" -exec chmod +x {} \; 2>/dev/null || true
+              find $f -type f -name "MFW" -exec chmod +x {} \; 2>/dev/null || true
+              find $f -type f -name "MFWUpdater" -exec chmod +x {} \; 2>/dev/null || true
+              tar -cpzf $f-${{ needs.meta.outputs.tag }}.tar.gz -C $f .
+            else
+              (cd $f && zip -r ../$f-${{ needs.meta.outputs.tag }}.zip .)
+            fi
           done
 
       - uses: softprops/action-gh-release@v2.2.2
