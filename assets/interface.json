@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.2.2",
+    "version": "1.3.0",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",
@@ -33,7 +33,11 @@
         {
             "name": "启动",
             "entry": "启动",
-            "default_check": true
+            "default_check": true,
+            "description": "<p>选择”艾因索菲“或”蒂卡拉“服务器</p><p>注意：该”选择服务器“选项并不能在进入时主动选择服务器，其作用在于当游戏启动时因为一些原因进入服务器选择界面时不至于卡住不动</p>",
+            "option":[
+                "选择服务器"
+            ]
         },
         {
             "name": "弥弥观测站",
@@ -241,6 +245,36 @@
         }
     ],
     "option": {
+        "选择服务器":{
+            "cases": [
+                {
+                    "name": "艾因索菲",
+                    "pipeline_override":{
+                        "服务器选择":{
+                            "recognition":{
+                                "type":"OCR",
+                                "param":{
+                                    "expected": "艾因索菲"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "蒂卡拉",
+                    "pipeline_override":{
+                        "服务器选择":{
+                            "recognition":{
+                                "type":"OCR",
+                                "param":{
+                                    "expected": "蒂卡拉"
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        },
         "关卡类型": {
             "label": "选择要扫荡的关卡",
             "cases": [
