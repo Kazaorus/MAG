@@ -130,7 +130,7 @@ if sys.platform == "darwin":
 
 elif sys.platform == "win32":
     base_command += [
-        "--icon=./app/assets/icons/logo.ico",
+        "--icon=./logo.ico",
         "--distpath",
         os.path.join("dist"),
     ]
