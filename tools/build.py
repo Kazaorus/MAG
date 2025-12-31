@@ -291,14 +291,20 @@ generate_file_list(
 )
 
 # === 转移maafw资源文件 ===
-# 复制 assets 文件夹内容到 dist/MFW
+# 复制 assets 文件夹内容到 dist/MFW（白名单模式）
 assets_src = os.path.join(os.getcwd(), "assets")
 dist_mfw = os.path.join(os.getcwd(), "dist", "MFW")
+# 白名单：只复制这些文件和文件夹
+whitelist = ["interface.json", "resource", "custom", "custom_task_config"]
 if os.path.exists(assets_src):
     assets_items = os.listdir(assets_src)
     if assets_items:
-        # 对每个项目单独检查，存在就跳过，不存在就复制
+        # 对每个项目单独检查，只复制白名单中的项目
         for item in assets_items:
+            # 检查是否在白名单中
+            if item not in whitelist:
+                print(f"[INFO] {item} skipped (not in whitelist)")
+                continue
             src_item = os.path.join(assets_src, item)
             dst_item = os.path.join(dist_mfw, item)
             if os.path.exists(dst_item):
