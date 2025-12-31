@@ -141,8 +141,8 @@ class MirrorCdkLineEditCard(LineEditCard):
         self._timer.start()
         self.lineEdit.textChanged.connect(self._on_line_edit_changed)
         self._refresh_remaining_time()
-
-    def _on_line_edit_changed(self, _text: str):
+        
+    def _on_line_edit_changed(self, text: str):
         """CDK 更改时重置过期时间并更新提示。"""
         if cfg.get(cfg.cdk_expired_time) != -1:
             cfg.set(cfg.cdk_expired_time, -1)

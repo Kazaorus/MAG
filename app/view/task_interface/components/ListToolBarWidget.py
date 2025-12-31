@@ -73,6 +73,15 @@ class BaseListToolBarWidget(QWidget):
         )
         self.delete_button.setToolTip(self.tr("Delete"))
 
+        # 切换按钮（用于切换到特殊任务列表）
+        self.switch_button = ToolButton(FIF.RIGHT_ARROW)
+        self.switch_button.installEventFilter(
+            ToolTipFilter(self.switch_button, 0, ToolTipPosition.TOP)
+        )
+        self.switch_button.setToolTip(self.tr("Switch to Special Tasks"))
+        # 默认隐藏，只在普通任务模式下显示
+        self.switch_button.hide()
+
         # 布局
         self.title_layout = QHBoxLayout()
         # 设置边距
@@ -81,6 +90,7 @@ class BaseListToolBarWidget(QWidget):
         self.title_layout.addWidget(self.deselect_all_button)
         self.title_layout.addWidget(self.delete_button)
         self.title_layout.addWidget(self.add_button)
+        self.title_layout.addWidget(self.switch_button)
 
     def _init_task_list(self):
         """初始化任务列表"""
@@ -127,21 +137,42 @@ class ConfigListToolBarWidget(BaseListToolBarWidget):
         """添加配置项。"""
         # 通过对话框创建新配置
         bundles = []
-        main_cfg = getattr(self.service_coordinator.config, "_main_config", None)
-        if main_cfg:
-            bundle_source = main_cfg.get("bundle", [])
-            if isinstance(bundle_source, dict):
-                for name, value in bundle_source.items():
-                    bundle_info = {"name": name}
-                    if isinstance(value, dict):
-                        bundle_info["path"] = value.get("path", "")
-                    else:
-                        bundle_info["path"] = str(value)
-                    bundles.append(bundle_info)
-            elif isinstance(bundle_source, list):
-                bundles = bundle_source
+        config_service = self.service_coordinator.config
+        try:
+            # 优先通过 ConfigService 的接口获取 bundle 列表，避免直接依赖内部结构
+            bundle_names = config_service.list_bundles()
+            for name in bundle_names:
+                try:
+                    info = config_service.get_bundle(name)
+                except FileNotFoundError:
+                    continue
+                bundle_info = {
+                    "name": str(info.get("name", name)),
+                    "path": str(info.get("path", "")),
+                }
+                bundles.append(bundle_info)
+        except Exception:
+            # 回退：尝试从 _main_config 读取（兼容旧数据/异常场景）
+            main_cfg = getattr(config_service, "_main_config", None)
+            if main_cfg:
+                bundle_source = main_cfg.get("bundle", [])
+                if isinstance(bundle_source, dict):
+                    for name, value in bundle_source.items():
+                        bundle_info = {"name": name}
+                        if isinstance(value, dict):
+                            bundle_info["path"] = value.get("path", "")
+                        else:
+                            bundle_info["path"] = str(value)
+                        bundles.append(bundle_info)
+                elif isinstance(bundle_source, list):
+                    bundles = bundle_source
 
-        dlg = AddConfigDialog(resource_bundles=bundles, parent=self.window(), interface=self.service_coordinator.interface)
+        dlg = AddConfigDialog(
+            resource_bundles=bundles,
+            parent=self.window(),
+            interface=self.service_coordinator.interface,
+            service_coordinator=self.service_coordinator,
+        )
         if dlg.exec():
             cfg = dlg.get_config_item()
             if cfg:
@@ -191,12 +222,15 @@ class TaskListToolBarWidget(BaseListToolBarWidget):
         self.core_signalBus = self.service_coordinator.signal_bus
         if self._task_filter_mode == "special":
             self._apply_special_mode_ui()
+        elif self._task_filter_mode == "normal":
+            # 普通任务模式下显示切换按钮
+            self.switch_button.show()
         # 选择全部按钮
         self.select_all_button.clicked.connect(self.select_all)
         # 取消选择全部按钮
         self.deselect_all_button.clicked.connect(self.deselect_all)
-        # 添加按钮
-        self.add_button.clicked.connect(self.add_task)
+        # 添加按钮（使用 lambda 确保 idx 参数使用默认值 -2）
+        self.add_button.clicked.connect(lambda: self.add_task(-2))
         # 删除按钮
         self.delete_button.clicked.connect(self.remove_selected_task)
 
@@ -222,8 +256,12 @@ class TaskListToolBarWidget(BaseListToolBarWidget):
         """取消选择全部"""
         self.task_list.deselect_all()
 
-    def add_task(self):
-        """添加任务"""
+    def add_task(self, idx: int = -2):
+        """添加任务
+        
+        Args:
+            idx: 插入位置索引，默认为-2（倒数第二个位置）
+        """
         # 打开添加任务对话框
         task_map = getattr(self.service_coordinator.task, "default_option", {})
         interface = getattr(self.service_coordinator.task, "interface", {})
@@ -240,7 +278,7 @@ class TaskListToolBarWidget(BaseListToolBarWidget):
             new_task = dlg.get_task_item()
             if new_task:
                 # 持久化到服务层
-                self.service_coordinator.modify_task(new_task)
+                self.service_coordinator.modify_task(new_task, idx)
 
     def _filter_task_map_by_mode(
         self, task_map: dict[str, dict], interface: dict | None
@@ -256,18 +294,43 @@ class TaskListToolBarWidget(BaseListToolBarWidget):
             if name:
                 task_special_map[name] = task_def.get("spt", False)
 
+        # 获取当前配置中的资源
+        current_resource_name = ""
+        try:
+            pre_config_task = self.service_coordinator.task.get_task("Pre-Configuration")
+            if pre_config_task:
+                current_resource_name = pre_config_task.task_option.get("resource", "")
+        except Exception:
+            pass
+
         def _include(task_name: str) -> bool:
             is_special = task_special_map.get(task_name, False)
             if self._task_filter_mode == "special":
-                return is_special
-            if self._task_filter_mode == "normal":
-                return not is_special
+                if not is_special:
+                    return False
+            elif self._task_filter_mode == "normal":
+                if is_special:
+                    return False
+            
+            # 根据资源过滤任务
+            if current_resource_name:
+                for task_def in interface.get("task", []):
+                    if task_def.get("name") == task_name:
+                        task_resources = task_def.get("resource", [])
+                        # 如果任务没有 resource 字段，或者 resource 为空列表，表示所有资源都可用
+                        if not task_resources:
+                            return True
+                        # 如果任务的 resource 列表包含当前资源，则显示
+                        if current_resource_name in task_resources:
+                            return True
+                        return False
+            
             return True
 
         return {name: opts for name, opts in task_map.items() if _include(name)}
 
     def _apply_special_mode_ui(self):
-        """特殊任务界面隐藏批量与增删按钮"""
+        """特殊任务界面隐藏批量与增删按钮，但显示切换按钮"""
         for btn in (
             self.select_all_button,
             self.deselect_all_button,
@@ -275,6 +338,42 @@ class TaskListToolBarWidget(BaseListToolBarWidget):
             self.delete_button,
         ):
             btn.hide()
+        # 特殊任务模式下显示切换按钮（用于切换回普通任务）
+        self.switch_button.show()
+        # 更新切换按钮的图标和提示文本
+        from qfluentwidgets import FluentIcon as FIF
+        self.switch_button.setIcon(FIF.LEFT_ARROW)
+        self.switch_button.setToolTip(self.tr("Switch to Normal Tasks"))
+    
+    def switch_filter_mode(self):
+        """切换任务列表的过滤模式（normal <-> special）"""
+        if self._task_filter_mode == "normal":
+            # 切换到特殊任务模式
+            self._task_filter_mode = "special"
+            self._apply_special_mode_ui()
+            self.set_title(self.tr("Special Tasks"))
+        elif self._task_filter_mode == "special":
+            # 切换到普通任务模式
+            self._task_filter_mode = "normal"
+            # 显示所有按钮
+            self.select_all_button.show()
+            self.deselect_all_button.show()
+            self.add_button.show()
+            self.delete_button.show()
+            self.switch_button.show()
+            # 更新切换按钮的图标和提示文本
+            from qfluentwidgets import FluentIcon as FIF
+            self.switch_button.setIcon(FIF.RIGHT_ARROW)
+            self.switch_button.setToolTip(self.tr("Switch to Special Tasks"))
+            self.set_title(self.tr("Tasks"))
+        else:
+            # all 模式不支持切换
+            return
+        
+        # 更新任务列表的过滤模式并刷新
+        if hasattr(self, 'task_list') and self.task_list:
+            self.task_list._filter_mode = self._task_filter_mode
+            self.task_list.update_list()
 
     def remove_selected_task(self):
         cur = self.task_list.currentItem()

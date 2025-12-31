@@ -1,9 +1,8 @@
 from datetime import datetime
 from html import escape
 import re
-from venv import logger
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import (
     QFrame,
@@ -18,15 +17,17 @@ from qfluentwidgets import (
     BodyLabel,
     ScrollArea,
     SimpleCardWidget,
-    ToolButton,
-    ToolTipFilter,
-    ToolTipPosition,
+    PushButton,
     FluentIcon as FIF,
     isDarkTheme,
     qconfig,
 )
 
 from app.common.signal_bus import signalBus
+from app.utils.logger import logger
+from app.core.core import ServiceCoordinator
+from app.view.task_interface.components.MonitorWidget import MonitorWidget
+from app.utils.markdown_helper import render_markdown
 
 
 class LogoutputWidget(QWidget):
@@ -34,8 +35,9 @@ class LogoutputWidget(QWidget):
     日志输出组件
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, service_coordinator: ServiceCoordinator | None = None, parent=None):
         super().__init__(parent)
+        self.service_coordinator = service_coordinator
         # 级别颜色映射（随主题自动更新）
         self._level_color: dict[str, str] = {}
         self._log_entries: list[tuple[BodyLabel, str, bool]] = []
@@ -47,15 +49,60 @@ class LogoutputWidget(QWidget):
         self._apply_theme_colors()
         qconfig.themeChanged.connect(self._apply_theme_colors)
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 12, 0, 18)
+        self.main_layout.setContentsMargins(0, 8,0, 20)
         self.main_layout.setSpacing(8)
         self.main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        # 添加监控组件（如果有 service_coordinator）
+        if self.service_coordinator:
+            # 监控标题栏
+            monitor_title_layout = QHBoxLayout()
+            monitor_title_layout.setContentsMargins(0, 22, 0, 0)  # 上部避让12px
+            monitor_title_layout.setSpacing(8)
+            
+            self.monitor_title_label = BodyLabel(self.tr("Monitor"))
+            self.monitor_title_label.setStyleSheet("font-size: 20px;")
+            monitor_title_layout.addWidget(self.monitor_title_label)
+            
+            self.main_layout.addLayout(monitor_title_layout)
+            
+            # 创建监控卡片外壳（和日志组件一样的外壳包裹）
+            # 16:9比例，宽度344px，高度 = 344 * 9 / 16 = 194px
+            self._monitor_width = 344
+            self._monitor_height = 194
+            
+            self.monitor_card = SimpleCardWidget()
+            self.monitor_card.setClickEnabled(False)
+            self.monitor_card.setBorderRadius(8)
+            # 设置监控卡片为固定大小（344x194，16:9比例，与监控组件内部尺寸一致）
+            self.monitor_card.setFixedSize(self._monitor_width, self._monitor_height)
+            # 设置大小策略为固定，不影响其他组件
+            monitor_card_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            self.monitor_card.setSizePolicy(monitor_card_policy)
+            
+            # 创建监控组件
+            self.monitor_widget = MonitorWidget(
+                self.service_coordinator, 
+                self
+            )
+            
+            # 将监控组件添加到卡片中
+            monitor_card_layout = QVBoxLayout(self.monitor_card)
+            monitor_card_layout.setContentsMargins(0, 0, 0, 0)
+            monitor_card_layout.addWidget(self.monitor_widget)
+            # 卡片内容居中对齐
+            monitor_card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # 监控组件使用固定尺寸，不使用拉伸因子
+            self.main_layout.addWidget(self.monitor_card, 0)
+        
         self.main_layout.addLayout(self.log_output_title_layout)
-        self.main_layout.addWidget(self.log_output_widget)
+        # 日志区域占据较少空间（拉伸因子为 1）
+        self.main_layout.addWidget(self.log_output_widget, 1)
 
-        # 连接 MAA Sink 回调信号
-        signalBus.callback.connect(self._on_maa_callback)
+        # 连接日志输出信号
         signalBus.log_output.connect(self._on_log_output)
+
         signalBus.log_clear_requested.connect(self.clear_log)
         signalBus.log_zip_started.connect(
             lambda: self.generate_log_zip_button.setEnabled(False)
@@ -87,8 +134,9 @@ class LogoutputWidget(QWidget):
         """主题变化时刷新已有日志颜色"""
         fallback = self._level_color.get("INFO", self._resolve_base_text_color())
         base_color = self._resolve_base_text_color()
-        for label, level, has_custom_color in self._log_entries:
-            if has_custom_color:
+        for label, level, has_rich_content in self._log_entries:
+            if has_rich_content:
+                # 富文本内容使用基础颜色（内部可能有自己的颜色设置）
                 label.setStyleSheet(f"color: {base_color};")
             else:
                 color = self._level_color.get(level, fallback)
@@ -156,12 +204,9 @@ class LogoutputWidget(QWidget):
         self.log_output_title.setStyleSheet("font-size: 20px;")
 
         # 生成日志压缩包按钮
-        self.generate_log_zip_button = ToolButton(FIF.FEEDBACK, self)
-        self.generate_log_zip_button.setToolTip(self.tr("generate log zip"))
-        # 悬浮提示
-        self.generate_log_zip_button.installEventFilter(
-            ToolTipFilter(self.generate_log_zip_button, 0, ToolTipPosition.TOP)
-        )
+        self.generate_log_zip_button = PushButton(self.tr("generate log zip"), self)
+        self.generate_log_zip_button.setIcon(FIF.FEEDBACK)
+        self.generate_log_zip_button.setIconSize(QSize(18, 18))
 
         # 日志输出区域标题栏总体布局
         self.log_output_title_layout = QHBoxLayout()
@@ -184,79 +229,8 @@ class LogoutputWidget(QWidget):
         self._add_tail_spacer()
 
     def _on_log_output(self, level: str, text: str):
+        """处理日志输出信号"""
         self.add_structured_log(level, text)
-
-    def _on_maa_callback(self, signal: dict):
-        """处理 MAA Sink 发送的回调信号"""
-        if not isinstance(signal, dict):
-            return
-
-        signal_name = signal.get("name", "")
-        status = signal.get("status", 0)  # 1=Starting, 2=Succeeded, 3=Failed
-        if signal_name == "speed_test":
-            latency_ms = int(signal.get("details", 0) * 1000)
-            level = self._latency_level(latency_ms)
-            message = self.tr("screenshot test success, time: ") + f"{latency_ms}ms"
-            self.add_structured_log(level, message)
-            return
-
-        # 根据不同的信号类型处理
-        if signal_name == "resource":
-            # 资源加载状态
-            self._handle_resource_signal(status)
-
-        elif signal_name == "controller":
-            # 控制器/模拟器连接状态
-            self._handle_controller_signal(status)
-
-        elif signal_name == "task":
-            # 任务执行状态
-            task = signal.get("task", "")
-            self._handle_task_signal(status, task)
-
-        elif signal_name == "context":
-            # 上下文信息原样输出
-            details = signal.get("details", "")
-            if details:
-                self.add_structured_log("INFO", details)
-
-    def _handle_resource_signal(self, status: int):
-        """处理资源加载信号 - 只输出失败"""
-        # status: 1=Starting, 2=Succeeded, 3=Failed
-        if status == 3:
-            self.add_structured_log("ERROR", self.tr("Resource Loading Failed"))
-
-    def _handle_controller_signal(self, status: int):
-        """处理控制器/模拟器连接信号 - 只输出开始和失败"""
-        # status: 1=Starting, 2=Succeeded, 3=Failed
-        if status == 1:
-            self.add_structured_log("INFO", self.tr("Controller Started Connect"))
-        elif status == 3:
-            self.add_structured_log("ERROR", self.tr("Controller Connect Failed"))
-
-    def _handle_task_signal(self, status: int, task: str):
-        """处理任务执行信号 - 只输出开始和失败"""
-        # status: 1=Starting, 2=Succeeded, 3=Failed
-        task_text = task if task else self.tr("Unknown Task")
-        if task_text == "MaaNS::Tasker::post_stop":
-            return
-        elif status == 1:
-            self.add_structured_log(
-                "INFO", self.tr("Task started execution: ") + task_text
-            )
-        elif status == 3:
-            self.add_structured_log(
-                "ERROR", self.tr("Task execution failed: ") + task_text
-            )
-
-    def _latency_level(self, latency_ms: int) -> str:
-        if latency_ms <= 30:
-            return "INFO"
-        elif latency_ms <= 100:
-            return "WARNING"
-        elif latency_ms <= 200:
-            return "ERROR"
-        return "CRITICAL"
 
     def add_structured_log(self, level: str, text: str):
         # 规范化级别
@@ -266,17 +240,44 @@ class LogoutputWidget(QWidget):
         self.append_text_to_log(text, upper)
         logger.info(f"[{level}] {text}")
 
+    def _has_rich_content_quick_check(self, text: str) -> bool:
+        """快速检测文本是否包含富文本内容（Markdown/HTML/颜色标记）"""
+        # 检测颜色标记
+        if re.search(r"\[color:[^\]]+\].*?\[/color\]", text, re.IGNORECASE | re.DOTALL):
+            return True
+        
+        # 检测 HTML 标签
+        if re.search(r'<[a-zA-Z][^>]*(?:/>|>[^<]*</[a-zA-Z]+>|>)', text, re.DOTALL | re.IGNORECASE):
+            return True
+        
+        # 检测 Markdown 语法
+        md_patterns = [
+            r'#{1,6}\s',  # 标题
+            r'\*\*[^*]+\*\*',  # 粗体
+            r'(?<!\*)\*(?!\*)[^*]+\*(?!\*)',  # 斜体
+            r'`[^`]+`',  # 行内代码
+            r'```',  # 代码块
+            r'\[[^\]]+\]\([^\)]+\)',  # 链接
+            r'^\s*[-*+]\s+',  # 无序列表
+            r'^\s*\d+\.\s+',  # 有序列表
+            r'\|.*\|',  # 表格
+            r'^\s*>\s+',  # 引用
+        ]
+        return any(re.search(pattern, text, re.MULTILINE) for pattern in md_patterns)
+
     def append_text_to_log(self, msg: str, level: str):
         """将日志内容追加到滚动区域"""
         raw_text = str(msg)
         timestamp = datetime.now().strftime("%H:%M:%S")
-        lines = raw_text.splitlines() or [""]
-        for line in lines:
-            self._add_log_row(timestamp, line, level)
+        
+        # 将整个文本作为一条日志处理，这样可以：
+        # 1. 保持表格、代码块等Markdown结构的完整性
+        # 2. 正确处理换行符（在同一个日志条目内换行显示）
+        self._add_log_row(timestamp, raw_text, level)
 
     def _add_log_row(self, timestamp: str, text: str, level: str):
         """新增一行日志（左时间，右内容）"""
-        formatted_text, has_custom_color = self._format_colored_text(text)
+        formatted_text, has_rich_content = self._format_colored_text(text)
         base_color = self._resolve_base_text_color()
         color = self._level_color.get(level, base_color)
 
@@ -291,8 +292,9 @@ class LogoutputWidget(QWidget):
         time_label.setSizePolicy(time_policy)
 
         content_label = BodyLabel(formatted_text)
+        # 如果有富文本内容（Markdown、HTML 或颜色标记），使用 RichText 格式
         content_label.setTextFormat(
-            Qt.TextFormat.RichText if has_custom_color else Qt.TextFormat.PlainText
+            Qt.TextFormat.RichText if has_rich_content else Qt.TextFormat.PlainText
         )
         content_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         content_label.setWordWrap(True)
@@ -301,8 +303,8 @@ class LogoutputWidget(QWidget):
         content_policy.setVerticalPolicy(QSizePolicy.Policy.Minimum)
         content_policy.setHeightForWidth(True)
         content_label.setSizePolicy(content_policy)
-        if has_custom_color:
-            # 忽略日志级别颜色，按自定义颜色渲染
+        if has_rich_content:
+            # 对于富文本内容，使用基础颜色（富文本内部可能有自己的颜色设置）
             content_label.setStyleSheet(f"color: {base_color};")
         else:
             content_label.setStyleSheet(f"color: {color};")
@@ -319,7 +321,7 @@ class LogoutputWidget(QWidget):
             1,
             alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
         )
-        self._log_entries.append((content_label, level, has_custom_color))
+        self._log_entries.append((content_label, level, has_rich_content))
         self._log_row_index += 1
         self._add_tail_spacer()
         self._sync_row_heights()
@@ -339,34 +341,98 @@ class LogoutputWidget(QWidget):
 
     def _format_colored_text(self, text: str) -> tuple[str, bool]:
         """
-        解析 [color:xxx]...[/color] 结构，生成富文本以支持多色展示
-        返回 (富文本字符串, 是否包含自定义颜色)
+        解析文本内容，支持 Markdown、HTML 和 [color:xxx]...[/color] 结构
+        返回 (富文本字符串, 是否包含富文本内容)
         """
-        pattern = re.compile(r"\[color:([^\]]+)\](.*?)\[/color\]", re.IGNORECASE | re.DOTALL)
-        has_custom_color = False
-        parts: list[str] = []
-        last_index = 0
-
-        for match in pattern.finditer(text):
-            has_custom_color = True
-            # 处理前置纯文本
-            prefix = text[last_index:match.start()]
-            if prefix:
-                parts.append(escape(prefix))
-
-            color = self._sanitize_color(match.group(1))
-            content = escape(match.group(2))
-            parts.append(f'<span style="color: {color};">{content}</span>')
-            last_index = match.end()
-
-        if not has_custom_color:
-            return escape(text), False
-
-        # 追加剩余纯文本
-        if last_index < len(text):
-            parts.append(escape(text[last_index:]))
-
-        return "".join(parts), True
+        # 检测是否包含颜色标记
+        color_pattern = re.compile(r"\[color:([^\]]+)\](.*?)\[/color\]", re.IGNORECASE | re.DOTALL)
+        has_color_markup = bool(color_pattern.search(text))
+        
+        # 快速检测是否可能包含 Markdown 或 HTML 内容
+        # 检查 HTML 标签（包括自闭合标签如 <br>, <hr> 和成对标签）
+        html_tag_pattern = re.compile(r'<[a-zA-Z][^>]*(?:/>|>[^<]*</[a-zA-Z]+>|>)', re.DOTALL | re.IGNORECASE)
+        has_html = bool(html_tag_pattern.search(text))
+        
+        # 检查常见的 Markdown 语法特征
+        md_indicators = [
+            r'#{1,6}\s',  # 标题
+            r'\*\*[^*]+\*\*',  # 粗体
+            r'(?<!\*)\*(?!\*)[^*]+\*(?!\*)',  # 斜体（避免与粗体冲突）
+            r'`[^`]+`',  # 行内代码
+            r'```',  # 代码块标记
+            r'\[[^\]]+\]\([^\)]+\)',  # 链接
+            r'^\s*[-*+]\s+',  # 无序列表（必须以行首开始）
+            r'^\s*\d+\.\s+',  # 有序列表（必须以行首开始）
+            r'^\s*>\s+',  # 引用
+        ]
+        # 使用MULTILINE模式，使^能够匹配每行的开始
+        has_markdown = any(re.search(pattern, text, re.MULTILINE) for pattern in md_indicators)
+        
+        # 表格检测：需要包含至少两列（至少两个|）和分隔行
+        # 表格模式：包含|的行，且后面跟着包含-或=的分隔行
+        table_pattern = re.compile(
+            r'\|[^\|]+\|[^\|]+.*\n.*\|[\s\-\=:]+\|', 
+            re.MULTILINE
+        )
+        if table_pattern.search(text):
+            has_markdown = True
+        
+        has_rich_content = has_color_markup or has_markdown or has_html
+        
+        # 处理颜色标记：先提取颜色标记，对标记内的内容分别处理
+        if has_color_markup:
+            parts: list[str] = []
+            last_index = 0
+            
+            for match in color_pattern.finditer(text):
+                # 处理前置文本（可能包含 Markdown/HTML）
+                prefix = text[last_index:match.start()]
+                if prefix:
+                    prefix_html = render_markdown(prefix)
+                    parts.append(prefix_html)
+                
+                # 处理颜色标记内的内容（可能包含 Markdown/HTML）
+                color = self._sanitize_color(match.group(1))
+                content = match.group(2)
+                content_html = render_markdown(content)
+                # 在渲染后的 HTML 上应用颜色样式
+                parts.append(f'<span style="color: {color};">{content_html}</span>')
+                last_index = match.end()
+            
+            # 处理剩余文本
+            if last_index < len(text):
+                suffix = text[last_index:]
+                suffix_html = render_markdown(suffix)
+                parts.append(suffix_html)
+            
+            result = "".join(parts)
+            # 如果渲染后包含 HTML 标签，说明有富文本内容
+            has_rich_result = bool(re.search(r'<[a-zA-Z]', result))
+            return result, has_rich_result
+        elif has_rich_content:
+            # 有 Markdown/HTML 但没有颜色标记，直接渲染
+            html_content = render_markdown(text)
+            # 验证渲染后确实包含HTML标签（确保渲染成功）
+            if re.search(r'<[a-zA-Z]', html_content):
+                return html_content, True
+            else:
+                # 如果渲染后没有HTML标签，说明可能是纯文本，回退到纯文本处理
+                if '\n' in text:
+                    escaped_text = escape(text)
+                    escaped_text = escaped_text.replace('\n', '<br>')
+                    return escaped_text, True
+                else:
+                    return escape(text), False
+        else:
+            # 纯文本：如果有换行符，需要转换为HTML的<br>标签以正确显示
+            if '\n' in text:
+                escaped_text = escape(text)
+                # 将换行符转换为<br>标签
+                escaped_text = escaped_text.replace('\n', '<br>')
+                return escaped_text, True  # 需要RichText格式来渲染<br>
+            else:
+                # 纯文本单行，直接返回转义后的内容
+                return escape(text), False
 
     def _scroll_to_bottom(self):
         """自动滚动到底部"""
@@ -429,3 +495,4 @@ class LogoutputWidget(QWidget):
 
             if content_label.minimumHeight() != required_height:
                 content_label.setMinimumHeight(required_height)
+    

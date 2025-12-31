@@ -94,8 +94,9 @@ class OptionFormWidget(QWidget):
             # 处理不同类型的布局项
             if item.widget():
                 widget = item.widget()
-                widget.hide()
-                widget.setParent(None)
+                if widget:
+                    widget.hide()
+                    widget.setParent(None)
                 widgets_to_delete.append(widget)
             elif item.layout():
                 layout = item.layout()
@@ -104,8 +105,9 @@ class OptionFormWidget(QWidget):
                     child_item = layout.takeAt(0)
                     if child_item.widget():
                         child_widget = child_item.widget()
-                        child_widget.hide()
-                        child_widget.setParent(None)
+                        if child_widget:
+                            child_widget.hide()
+                            child_widget.setParent(None)
                         widgets_to_delete.append(child_widget)
                     elif child_item.layout():
                         # 嵌套的子布局也要清理
@@ -114,8 +116,9 @@ class OptionFormWidget(QWidget):
                             nested_item = child_layout.takeAt(0)
                             if nested_item.widget():
                                 nested_widget = nested_item.widget()
-                                nested_widget.hide()
-                                nested_widget.setParent(None)
+                                if nested_widget:
+                                    nested_widget.hide()
+                                    nested_widget.setParent(None)
                                 widgets_to_delete.append(nested_widget)
                         layouts_to_delete.append(child_layout)
                 layouts_to_delete.append(layout)
@@ -142,9 +145,10 @@ class OptionFormWidget(QWidget):
             if item:
                 if item.widget():
                     widget = item.widget()
-                    widget.hide()
-                    widget.setParent(None)
-                    widget.deleteLater()
+                    if widget:
+                        widget.hide()
+                        widget.setParent(None)
+                        widget.deleteLater()
                 elif item.layout():
                     layout = item.layout()
                     layout.deleteLater()
@@ -201,10 +205,14 @@ class OptionFormWidget(QWidget):
                     option_item.set_value(value)
         
         # 第三步：最后确保所有选项项的子选项可见性正确（只显示当前选中值对应的子选项）
+        # 注意：由于 set_value 已经调用了 _update_children_visibility，这里只需要处理那些没有通过 set_value 设置的选项
+        # 实际上，如果所有选项都通过 set_value 设置，这一步可能是多余的，但保留作为保险
         for option_item in self.option_items.values():
             if option_item.config_type in ["combobox", "switch"]:
-                # 再次调用 _update_children_visibility 确保只显示当前选中值对应的子选项（跳过动画）
-                option_item._update_children_visibility(option_item.current_value, skip_animation=True)
+                # 只在选项值已设置但子选项可见性可能不正确时才更新（跳过动画）
+                # 由于 set_value 已经处理了可见性，这里主要是为了处理边缘情况
+                if option_item.current_value is not None:
+                    option_item._update_children_visibility(option_item.current_value, skip_animation=True)
     
     def _apply_single_child_config(self, option_item: OptionItemWidget, option_value: str, child_config: Any):
         """
@@ -238,15 +246,9 @@ class OptionFormWidget(QWidget):
                     # 设置子选项的值（这会触发子选项的 _update_children_visibility）
                     child_widget.set_value(child_config["value"])
                     
-                    # 如果有子选项的子选项，递归应用
+                    # 如果有子选项的子选项，递归应用（使用 _apply_children_config 以支持 hidden 字段）
                     if children_config:
-                        current_child_value = child_widget.current_value
-                        if current_child_value and current_child_value in children_config:
-                            self._apply_single_child_config(
-                                child_widget, 
-                                current_child_value, 
-                                children_config[current_child_value]
-                            )
+                        self._apply_children_config(child_widget, children_config)
                 else:
                     # 如果字典不包含 value 字段，可能是输入框的值（inputs 类型）
                     # 需要根据子选项的类型来判断
@@ -263,6 +265,7 @@ class OptionFormWidget(QWidget):
     def _apply_children_config(self, option_item: OptionItemWidget, children_config: Dict[str, Any]):
         """
         应用子选项配置，兼容 children 中以 option_value 或 child_key 为键的情况。
+        会跳过标记为 hidden 的子选项。
         """
         if not children_config:
             return
@@ -270,13 +273,27 @@ class OptionFormWidget(QWidget):
         child_definitions = option_item.config.get("children", {})
 
         for config_key, child_cfg in children_config.items():
+            # 跳过标记为 hidden 的子选项（hidden=True）
+            if isinstance(child_cfg, dict) and child_cfg.get("hidden", False):
+                logger.debug(f"跳过隐藏的子选项: option_key={option_item.key}, config_key={config_key}")
+                continue
+            
             option_value = config_key if config_key in child_definitions else None
 
             if not option_value:
                 option_value = option_item.get_option_value_for_child_key(config_key)
 
             if option_value and child_cfg:
-                self._apply_single_child_config(option_item, option_value, child_cfg)
+                # 如果 child_cfg 是字典且包含 hidden 字段（但 hidden=False），移除 hidden 字段后应用
+                if isinstance(child_cfg, dict) and "hidden" in child_cfg:
+                    # 移除 hidden 字段，保留其他配置
+                    actual_cfg = {k: v for k, v in child_cfg.items() if k != "hidden"}
+                    # 如果移除 hidden 后只剩下 value 字段，直接使用 value
+                    if len(actual_cfg) == 1 and "value" in actual_cfg:
+                        actual_cfg = actual_cfg["value"]
+                    self._apply_single_child_config(option_item, option_value, actual_cfg)
+                else:
+                    self._apply_single_child_config(option_item, option_value, child_cfg)
             else:
                 logger.debug(
                     f"跳过无效的子选项配置: option_key={option_item.key}, config_key={config_key}"

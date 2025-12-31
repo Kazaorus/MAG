@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QSplitter, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QSplitter
 from qfluentwidgets import BodyLabel, ScrollArea, SimpleCardWidget, SegmentedWidget
 
 from app.utils.logger import logger
@@ -27,6 +27,9 @@ from app.view.task_interface.components.Option_Widget_Mixin.PostActionSettingMix
 from app.view.task_interface.components.Option_Widget_Mixin.ResourceSettingMixin import (
     ResourceSettingMixin,
 )
+from app.view.task_interface.components.Option_Widget_Mixin.ControllerSettingMixin import (
+    ControllerSettingWidget,
+)
 from ....core.core import ServiceCoordinator
 
 
@@ -34,23 +37,192 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
     current_config: Dict[str, Any]
     parent_layout: QVBoxLayout
 
-    def __init__(self, service_coordinator: ServiceCoordinator, parent=None):
+    def __init__(
+        self,
+        service_coordinator: ServiceCoordinator,
+        parent=None,
+    ):
         # 先调用QWidget的初始化
         self.service_coordinator = service_coordinator
         QWidget.__init__(self, parent)
-        # 调用ResourceSettingMixin的初始化
-        ResourceSettingMixin.__init__(self)
-        # 调用PostActionSettingMixin的初始化
-        PostActionSettingMixin.__init__(self)
 
-        # 初始化UI组件
+        # 初始化UI组件（需要先创建布局）
         self._init_ui()
-        self._toggle_description(visible=False, animate=False)
+
+        # 初始化控制器设置组件（仍然使用 Widget 方式，因为它比较复杂）
+        self.controller_setting_widget = ControllerSettingWidget(
+            service_coordinator, self.option_page_layout
+        )
+
+        # 设置控制器组件的 current_config
+        self.current_config = self.controller_setting_widget.current_config
+
+        # 设置控制器组件的回调方法
+        self.controller_setting_widget._clear_options = self._clear_options
+        self.controller_setting_widget._set_description = self.set_description
+        self.controller_setting_widget._toggle_description = self._toggle_description
+
+        # 初始化 Resource 和 PostAction Mixin（它们现在是 OptionWidget 的一部分）
+        self._init_resource_settings()
+        self._init_post_action_settings()
+        
+        # 共享控制器相关属性到 Resource Mixin（ResourceSettingMixin 需要）
+        self.controller_type_mapping = self.controller_setting_widget.controller_type_mapping
+        self.current_controller_label = self.controller_setting_widget.current_controller_label
+
+        # 设置控制器类型变化时的回调，用于更新资源下拉框
+        def on_controller_type_changed(label, is_initializing=False):
+            """当控制器类型变化时，更新资源下拉框
+
+            Args:
+                label: 控制器标签
+                is_initializing: 是否在初始化阶段（如果是，不触发任务列表更新）
+            """
+            # 更新资源 Mixin 的控制器标签
+            self.current_controller_label = label
+            # 更新资源 Mixin 的控制器映射（以防有变化）
+            self.controller_type_mapping = (
+                self.controller_setting_widget.controller_type_mapping
+            )
+            # 重新构建资源映射表（确保使用最新的控制器信息）
+            self._rebuild_resource_mapping()
+
+            if label not in self.resource_mapping:
+                logger.warning(
+                    f"控制器 {label} 不在资源映射表中！可用的控制器: {list(self.resource_mapping.keys())}"
+                )
+
+            # 刷新资源下拉框（如果资源下拉框已创建）
+            if (
+                "resource_combo"
+                in self.resource_setting_widgets
+            ):
+                if hasattr(self, "_fill_resource_option"):
+                    self._fill_resource_option()
+
+                    # 控制器类型变化后，强制保存一次资源设置（仅在非初始化时）
+                    if not is_initializing:
+                        current_resource = (
+                            self.current_config.get(
+                                "resource", ""
+                            )
+                        )
+                        if current_resource:
+                            self._auto_save_resource_option(
+                                current_resource, skip_sync_check=True
+                            )
+                            # 触发任务列表更新（延迟触发，确保资源已保存）
+                            from PySide6.QtCore import QTimer
+
+                            QTimer.singleShot(
+                                50,
+                                lambda: self.service_coordinator.signal_bus.option_updated.emit(
+                                    {"resource": current_resource}
+                                ),
+                            )
+            else:
+                # 即使资源下拉框不存在，也需要更新资源任务的配置
+                # 检查当前资源是否在新控制器的资源列表中
+                if label in self.resource_mapping:
+                    current_resources = self.resource_mapping[
+                        label
+                    ]
+                    if current_resources:
+                        # 获取当前保存的资源
+                        from app.common.constants import _RESOURCE_
+
+                        resource_task = self.service_coordinator.task_service.get_task(
+                            _RESOURCE_
+                        )
+                        current_resource_name = ""
+                        if resource_task and isinstance(
+                            resource_task.task_option, dict
+                        ):
+                            current_resource_name = resource_task.task_option.get(
+                                "resource", ""
+                            )
+
+                        # 检查当前资源是否在新控制器的资源列表中
+                        resource_found = False
+                        for resource in current_resources:
+                            resource_name = resource.get("name", "")
+                            resource_label = resource.get("label", resource_name)
+                            if current_resource_name and current_resource_name in (
+                                resource_name,
+                                resource_label,
+                            ):
+                                resource_found = True
+                                break
+
+                        # 如果当前资源不在新控制器的资源列表中，自动选择第一个资源并保存（仅在非初始化时）
+                        if (
+                            not resource_found
+                            and current_resource_name
+                            and not is_initializing
+                        ):
+                            first_resource = current_resources[0]
+                            first_resource_name = first_resource.get("name", "")
+
+                            # 更新配置并保存
+                            if resource_task:
+                                resource_task.task_option["resource"] = (
+                                    first_resource_name
+                                )
+                                self.service_coordinator.task_service.update_task(
+                                    resource_task
+                                )
+
+                                # 触发任务列表更新（延迟触发，确保资源任务已保存）
+                                from PySide6.QtCore import QTimer
+
+                                QTimer.singleShot(
+                                    50,
+                                    lambda: self.service_coordinator.signal_bus.option_updated.emit(
+                                        {"resource": first_resource_name}
+                                    ),
+                                )
+                            else:
+                                logger.warning(f"未找到 Resource 任务，无法保存资源")
+                        elif not is_initializing:
+                            # 即使资源没有变化，也要触发任务列表更新（确保任务列表根据当前资源正确显示）
+                            if resource_task and isinstance(
+                                resource_task.task_option, dict
+                            ):
+                                final_resource = resource_task.task_option.get(
+                                    "resource", ""
+                                )
+                                if final_resource:
+                                    # 使用 QTimer 延迟触发，确保资源任务已保存
+                                    from PySide6.QtCore import QTimer
+
+                                    QTimer.singleShot(
+                                        50,
+                                        lambda: self.service_coordinator.signal_bus.option_updated.emit(
+                                            {"resource": final_resource}
+                                        ),
+                                    )
+
+        # 将回调设置到控制器组件
+        setattr(
+            self.controller_setting_widget,
+            "_on_controller_changed_callback",
+            on_controller_type_changed,
+        )
         self.speedrun_widget.config_changed.connect(self._on_speedrun_changed)
 
         # 连接CoreSignalBus的options_loaded信号
         service_coordinator.signal_bus.options_loaded.connect(self._on_options_loaded)
         service_coordinator.signal_bus.config_changed.connect(self._on_config_changed)
+        
+        # 监听运行状态变化，禁用/启用选项编辑
+        from app.common.signal_bus import signalBus
+        signalBus.task_status_changed.connect(self._on_task_status_changed)
+        
+        # 初始化时隐藏描述区域
+        self._toggle_description(visible=False, animate=False)
+        
+        # 初始化时检查运行状态并设置选项可用性
+        self._update_options_enabled()
 
     def _init_ui(self):
         """初始化UI"""
@@ -122,7 +294,9 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
         self.segmented_switcher.addItem(routeKey="options", text=self.tr("Options"))
         self.segmented_switcher.addItem(routeKey="speedrun", text=self.tr("Speedrun"))
         self.segmented_switcher.currentItemChanged.connect(self._on_segmented_changed)
-        self.option_area_layout.addWidget(self.segmented_switcher, alignment=Qt.AlignmentFlag.AlignBottom)
+        self.option_area_layout.addWidget(
+            self.segmented_switcher, alignment=Qt.AlignmentFlag.AlignBottom
+        )
         self.segmented_switcher.setCurrentItem("options")
         # 初始化时隐藏，待任务加载后按需显示
         self.segmented_switcher.setVisible(False)
@@ -137,6 +311,7 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
         card_layout.addWidget(self.option_area_widget)
         card_layout.setContentsMargins(0, 0, 0, 0)
         self.option_area_card.setLayout(card_layout)
+
         # ==================== 描述区域 ==================== #
         # 创建描述标题（直接放在主布局中）
         self.description_title = BodyLabel(self.tr("Function Description"))
@@ -241,25 +416,6 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
         self.main_layout.setSpacing(5)
 
     # ==================== UI 辅助方法 ==================== #
-
-    def _toggle_description(self, visible: bool|None = None, animate: bool = True) -> None:
-        """切换描述区域的显示/隐藏
-        visible: True显示，False隐藏，None切换当前状态
-        """
-        if visible is None:
-            # 切换当前状态
-            visible = not self._description_animator.is_expanded()
-
-        if visible:
-            if animate:
-                self._description_animator.expand()
-            else:
-                self._description_animator.set_visible_immediate(True)
-        else:
-            if animate:
-                self._description_animator.collapse()
-            else:
-                self._description_animator.set_visible_immediate(False)
 
     def _on_segmented_changed(self, key: str) -> None:
         """通过分段控件切换主选项/速通页"""
@@ -374,20 +530,59 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
             self._description_animator.expand(force_from_zero=not has_options)
 
     def _process_remote_images(self, html: str) -> str:
-        """下载公告中的网络图片到本地缓存，并替换为本地路径以保证可显示/预览。"""
+        """处理公告中的图片（网络图片下载到本地缓存，本地图片转换为URI格式）。"""
         if not html:
             return html
         
+        # 处理网络图片（http/https）
         urls = set(re.findall(r"https?://[^\s\"'>]+", html))
-        if not urls:
-            return html
-        
         for url in urls:
             local_path = self._cache_remote_image(url)
             if not local_path:
                 continue
             local_uri = Path(local_path).as_uri()
             html = html.replace(url, local_uri)
+        
+        # 处理本地图片路径（转换为 file:// URI 格式）
+        # 匹配 <img> 标签中的 src 属性，支持相对路径和绝对路径
+        img_pattern = re.compile(
+            r'(<img[^>]*src=["\'])([^"\']+)(["\'][^>]*>)',
+            re.IGNORECASE
+        )
+        
+        def replace_local_path(match):
+            prefix = match.group(1)
+            src = match.group(2)
+            suffix = match.group(3)
+            
+            # 如果已经是 file:// URI 或 http/https，跳过
+            if src.startswith(('file://', 'http://', 'https://')):
+                return match.group(0)
+            
+            # 如果是相对路径或绝对路径，转换为 file:// URI
+            try:
+                # 尝试解析为路径
+                img_path = Path(src)
+                # 如果是相对路径，尝试相对于当前工作目录
+                if not img_path.is_absolute():
+                    # 相对路径保持原样，让 Qt 自己处理
+                    # 或者可以尝试相对于 bundle 路径
+                    pass
+                
+                # 如果文件存在，转换为绝对路径的 URI
+                if img_path.exists():
+                    absolute_path = img_path.resolve()
+                    uri = absolute_path.as_uri()
+                    return f'{prefix}{uri}{suffix}'
+                else:
+                    # 文件不存在，保持原样（可能是相对路径，运行时才能确定）
+                    return match.group(0)
+            except Exception:
+                # 解析失败，保持原样
+                return match.group(0)
+        
+        html = img_pattern.sub(replace_local_path, html)
+        
         return html
 
     def _cache_remote_image(self, url: str) -> str | None:
@@ -419,6 +614,24 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
             logger.warning(f"下载网络图片失败: {url}, {e}")
             return None
 
+    def _toggle_description(self, visible: bool | None = None, animate: bool = True) -> None:
+        """切换描述区域的显示/隐藏
+        visible: True显示，False隐藏，None切换当前状态
+        """
+        if visible is None:
+            # 切换当前状态
+            visible = not self._description_animator.is_expanded()
+
+        if visible:
+            if animate:
+                self._description_animator.expand()
+            else:
+                self._description_animator.set_visible_immediate(True)
+        else:
+            if animate:
+                self._description_animator.collapse()
+            else:
+                self._description_animator.set_visible_immediate(False)
     
     def _on_link_activated(self, link: str):
         """处理链接点击事件"""
@@ -447,7 +660,8 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
         self.current_config = {}
 
     def _on_config_changed(self, config_id: str):
-        """配置切换时重置选项面板"""
+        """配置切换时清除选项面板"""
+        # 清除选项和当前选中的任务选项
         self.reset()
 
     def set_title(self, title: str):
@@ -456,12 +670,18 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
 
     def _clear_options(self):
         """清空选项区域"""
-        # 清空两个固定UI的字典（资源设置和完成后操作）
-        if hasattr(self, 'resource_setting_widgets'):
+        # 清空设置组件的字典
+        if hasattr(self, "controller_setting_widget"):
+            self.controller_setting_widget.resource_setting_widgets.clear()
+        if hasattr(self, "resource_setting_widgets"):
             self.resource_setting_widgets.clear()
-        if hasattr(self, 'post_action_widgets'):
+        if hasattr(self, "post_action_widgets"):
             self.post_action_widgets.clear()
         
+        # 清除资源选项（如果存在）
+        if hasattr(self, "_clear_resource_options"):
+            self._clear_resource_options()
+
         # 使用新框架清空选项
         self.option_form_widget._clear_options()
 
@@ -481,18 +701,20 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
                 continue
             if item.widget():
                 widget = item.widget()
-                widget.hide()
-                widget.setParent(None)
-                widget.deleteLater()
+                if widget:
+                    widget.hide()
+                    widget.setParent(None)
+                    widget.deleteLater()
             elif item.layout():
                 layout = item.layout()
                 while layout and layout.count() > 0:
                     child_item = layout.takeAt(0)
                     if child_item and child_item.widget():
                         child_widget = child_item.widget()
-                        child_widget.hide()
-                        child_widget.setParent(None)
-                        child_widget.deleteLater()
+                        if child_widget:
+                            child_widget.hide()
+                            child_widget.setParent(None)
+                            child_widget.deleteLater()
                 if layout:
                     layout.deleteLater()
 
@@ -510,22 +732,22 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
         form_structure_copy = {
             k: v for k, v in form_structure.items() if k != "description"
         }
-        
+
         # 检查是否有有效的选项项（有 type 字段的字典项）
         has_valid_options = False
         for key, item_config in form_structure_copy.items():
             if isinstance(item_config, dict) and "type" in item_config:
                 has_valid_options = True
                 break
-        
+
         # 处理表单结构中的描述字段（传入是否有选项的信息）
         description = None
         if isinstance(form_structure, dict) and "description" in form_structure:
             description = form_structure["description"]
-        
+
         # 如果有有效选项，构建表单；否则清空
         if has_valid_options:
-            self.option_splitter_widget.show()
+            self.option_area_card.show()
             self._option_animator.play(
                 lambda: self._apply_form_structure_with_animation(
                     form_structure_copy, config
@@ -533,12 +755,10 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
             )
         else:
             # 没有有效选项，使用动画清空选项区域
-            self._option_animator.play(
-                lambda: self._clear_options()
-            )
+            self._option_animator.play(lambda: self._clear_options())
             # 保持选项区域可见
-            self.option_splitter_widget.show()
-        
+            self.option_area_card.show()
+
         # 设置描述内容（set_description会处理显示/隐藏和动画过渡）
         # 放在最后确保选项区域已经正确设置可见性
         self.set_description(description or "", has_options=has_valid_options)
@@ -550,7 +770,8 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
         # 构建新选项
         self.option_form_widget.build_from_structure(form_structure, config)
         self._connect_option_signals()
-        logger.info("表单已使用 form_structure 完成更新")
+        # 更新选项的启用/禁用状态
+        self._update_options_enabled()
 
     def get_current_form_config(self):
         """
@@ -608,31 +829,41 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
 
         # 只使用form_structure更新表单
         if form_structure:
-            self.current_config = self.service_coordinator.option.get_options()
+            # 获取最新配置并更新到共享字典中（保持字典引用不变）
+            new_config = self.service_coordinator.option.get_options()
+            self.current_config.clear()
+            self.current_config.update(new_config)
+            # 同步更新控制器组件的 current_config（Resource 和 PostAction 现在直接使用 self.current_config）
+            self.controller_setting_widget.current_config = self.current_config
 
-            # 记录日志
-            logger.info(f"选项加载完成，共 {len(self.current_config)} 个选项")
-
-            # 判断是否为资源类型的配置
+            # 判断任务类型
             form_type = form_structure.get("type")
             is_resource = form_type == "resource"
+            is_controller = form_type == "controller"
             is_post_action = form_type == "post_action"
 
             if is_resource:
-                # 前置配置 - 使用动画过渡
+                # 资源任务 - 只显示资源下拉框
                 self._option_animator.play(
                     lambda: self._apply_resource_settings_with_animation()
                 )
-                # 资源类型没有公告，隐藏公告区域
-                self.set_description("", has_options=True)
+                # 资源类型的描述会在 create_settings 中设置
+
+            elif is_controller:
+                # 控制器任务 - 显示控制器设置
+                self._option_animator.play(
+                    lambda: self._apply_controller_settings_with_animation()
+                )
+                # 控制器类型的描述会在 create_settings 中设置
 
             elif is_post_action:
                 # 完成后操作 - 使用动画过渡
                 self._option_animator.play(
                     lambda: self._apply_post_action_settings_with_animation()
                 )
-                # 完成后操作类型没有公告，隐藏公告区域
-                self.set_description("", has_options=True)
+                # 从 form_structure 中获取描述（如果有的话）
+                description = form_structure.get("description", "")
+                self.set_description(description, has_options=True)
 
             else:
                 # 正常的表单更新逻辑（update_form_from_structure会处理公告）
@@ -648,10 +879,15 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
         task_id = getattr(option_service, "current_task_id", None)
         task = task_service.get_task(task_id) if task_id else None
         is_special_task = getattr(task, "is_special", False) if task else False
-        
-        speedrun_visible = not (
-            form_structure and form_structure.get("type") in ["resource", "post_action"]
-        ) and not is_special_task
+
+        speedrun_visible = (
+            not (
+                form_structure
+                and form_structure.get("type")
+                in ["resource", "controller", "post_action"]
+            )
+            and not is_special_task
+        )
 
         if not speedrun_visible:
             # 资源/完成后/特殊任务：隐藏分段与速通
@@ -684,17 +920,117 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
             self.option_stack.setCurrentIndex(1)
             self._apply_speedrun_config()
             self.segmented_switcher.setCurrentItem("speedrun")
+        
+        # 更新选项的启用/禁用状态（在所有选项加载完成后）
+        self._update_options_enabled()
 
     def _apply_resource_settings_with_animation(self):
-        """在动画回调中应用资源设置"""
+        """在动画回调中应用资源设置（只显示资源下拉框）"""
         self._clear_options()
+        # 确保选项区域可见
+        self.option_area_card.show()
+        # 资源任务只显示资源下拉框，不显示控制器设置
+        # 但资源下拉框需要控制器信息，所以先初始化控制器数据
+        self.controller_setting_widget._rebuild_interface_data()
+
+        # 同步控制器相关属性到资源 Mixin
+        self.controller_type_mapping = (
+            self.controller_setting_widget.controller_type_mapping
+        )
+
+        # 从Controller任务的配置中获取当前控制器类型（资源任务应该使用Controller任务的配置）
+        from app.common.constants import _CONTROLLER_
+
+        controller_task = self.service_coordinator.task_service.get_task(_CONTROLLER_)
+        controller_name = ""
+        if controller_task and isinstance(controller_task.task_option, dict):
+            controller_name = controller_task.task_option.get("controller_type", "")
+
+        # 如果Controller任务中没有配置，尝试从当前配置中获取（作为fallback）
+        if not controller_name:
+            controller_name = self.current_config.get("controller_type", "")
+
+        if controller_name:
+            # 查找对应的控制器标签
+            for (
+                label,
+                ctrl_info,
+            ) in self.controller_setting_widget.controller_type_mapping.items():
+                if ctrl_info["name"] == controller_name:
+                    self.current_controller_label = label
+                    break
+            else:
+                # 如果找不到，使用第一个控制器
+                if self.controller_setting_widget.controller_type_mapping:
+                    first_label = list(
+                        self.controller_setting_widget.controller_type_mapping.keys()
+                    )[0]
+                    self.current_controller_label = first_label
+        else:
+            # 如果没有配置，使用第一个控制器
+            if self.controller_setting_widget.controller_type_mapping:
+                first_label = list(
+                    self.controller_setting_widget.controller_type_mapping.keys()
+                )[0]
+                self.current_controller_label = first_label
+
+        # 从Resource任务的配置中获取当前资源值，并设置到current_config中
+        # 注意：必须在 create_resource_settings 之前设置，因为 create_resource_settings 会调用 _fill_resource_option
+        from app.common.constants import _RESOURCE_
+
+        resource_task = self.service_coordinator.task_service.get_task(_RESOURCE_)
+        if resource_task and isinstance(resource_task.task_option, dict):
+            resource_name = resource_task.task_option.get("resource", "")
+            if resource_name:
+                # 确保 current_config 中有 resource 字段
+                self.current_config["resource"] = resource_name
+
+        # 创建资源下拉框（此时 current_config 中已经有 resource 值了）
         self.create_resource_settings()
-        logger.info("资源设置表单已创建")
+        # 更新选项的启用/禁用状态
+        self._update_options_enabled()
+
+    def _apply_controller_settings_with_animation(self):
+        """在动画回调中应用控制器设置"""
+        self._clear_options()
+        # 确保选项区域可见
+        self.option_area_card.show()
+        # 确保 _toggle_description 方法已设置（防止在某些情况下丢失）
+        if (
+            not hasattr(self.controller_setting_widget, "_toggle_description")
+            or self.controller_setting_widget._toggle_description is None
+        ):
+            self.controller_setting_widget._toggle_description = (
+                self._toggle_description
+            )
+        # 控制器任务只显示控制器设置，不显示资源下拉框
+        self.controller_setting_widget.create_settings()
+        # 更新选项的启用/禁用状态
+        self._update_options_enabled()
+
+        logger.info("控制器设置表单已创建")
 
     def _apply_post_action_settings_with_animation(self):
         """在动画回调中应用完成后操作设置"""
         self._clear_options()
-        self.create_post_action_setting()
+        # 确保选项区域可见
+        self.option_area_card.show()
+
+        # 从 POST_ACTION 任务的配置中获取完成后操作配置，并设置到 current_config 中
+        from app.common.constants import POST_ACTION
+
+        post_action_task = self.service_coordinator.task_service.get_task(POST_ACTION)
+        if post_action_task and isinstance(post_action_task.task_option, dict):
+            post_action_config = post_action_task.task_option.get("post_action", {})
+            if post_action_config:
+                # 确保 current_config 中有 post_action 字段
+                self.current_config["post_action"] = post_action_config
+
+        # 创建完成后操作设置（此时 current_config 中已经有 post_action 值了）
+        self.create_post_action_settings()
+        # 更新选项的启用/禁用状态
+        self._update_options_enabled()
+        
         logger.info("完成后操作设置表单已创建")
 
     def _set_layout_visibility(self, layout, visible):
@@ -709,3 +1045,94 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
                 item.widget().setVisible(visible)
             elif item.layout():
                 self._set_layout_visibility(item.layout(), visible)
+
+    def _on_task_status_changed(self, task_id: str, status: str):
+        """监听任务状态变化，更新选项的启用/禁用状态"""
+        self._update_options_enabled()
+
+    def _update_options_enabled(self):
+        """根据运行状态更新所有选项的启用/禁用状态"""
+        # 检查是否有任务正在运行
+        is_running = self.service_coordinator.run_manager.is_running
+        self._set_options_enabled(not is_running)
+
+    def _set_options_enabled(self, enabled: bool):
+        """设置所有选项控件的启用/禁用状态
+        
+        :param enabled: True 启用，False 禁用
+        """
+        # 禁用/启用控制器设置组件中的控件
+        if hasattr(self, 'controller_setting_widget'):
+            # 先设置整个组件的启用状态（这会递归处理布局中的所有子控件）
+            self._set_widget_enabled(self.controller_setting_widget, enabled)
+            # 同时确保 resource_setting_widgets 字典中的所有控件都被处理
+            # （有些控件可能不在布局中，需要单独处理）
+            if hasattr(self.controller_setting_widget, 'resource_setting_widgets'):
+                for widget in self.controller_setting_widget.resource_setting_widgets.values():
+                    if widget and hasattr(widget, 'setEnabled'):
+                        widget.setEnabled(enabled)
+        
+        # 禁用/启用资源设置组件中的控件
+        if hasattr(self, 'resource_setting_widgets'):
+            for widget in self.resource_setting_widgets.values():
+                if widget:
+                    self._set_widget_enabled(widget, enabled)
+        
+        # 禁用/启用完成后操作设置组件中的控件
+        if hasattr(self, 'post_action_widgets'):
+            for widget in self.post_action_widgets.values():
+                if widget:
+                    self._set_widget_enabled(widget, enabled)
+        
+        # 禁用/启用普通任务的选项表单控件
+        if hasattr(self, 'option_form_widget'):
+            self._set_widget_enabled(self.option_form_widget, enabled)
+        
+        # 禁用/启用速通配置控件
+        if hasattr(self, 'speedrun_widget'):
+            self._set_widget_enabled(self.speedrun_widget, enabled)
+
+    def _set_widget_enabled(self, widget, enabled: bool):
+        """递归设置控件及其子控件的启用/禁用状态
+        
+        :param widget: 要设置的控件
+        :param enabled: True 启用，False 禁用
+        """
+        if widget is None:
+            return
+        
+        # 设置控件本身的启用状态
+        if hasattr(widget, 'setEnabled'):
+            widget.setEnabled(enabled)
+        
+        # 如果控件有布局，处理布局中的控件（这会递归处理所有子控件）
+        if hasattr(widget, 'layout') and widget.layout():
+            self._set_layout_enabled(widget.layout(), enabled)
+        # 如果没有布局，直接处理子控件
+        elif hasattr(widget, 'children'):
+            for child in widget.children():
+                self._set_widget_enabled(child, enabled)
+
+    def _set_layout_enabled(self, layout, enabled: bool):
+        """递归设置布局中所有控件的启用/禁用状态
+        
+        :param layout: 要设置的布局
+        :param enabled: True 启用，False 禁用
+        """
+        if layout is None:
+            return
+        
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item is None:
+                continue
+            
+            if item.widget():
+                widget = item.widget()
+                if widget and hasattr(widget, 'setEnabled'):
+                    widget.setEnabled(enabled)
+                # 递归处理子控件
+                self._set_widget_enabled(widget, enabled)
+            elif item.layout():
+                # 递归处理子布局
+                self._set_layout_enabled(item.layout(), enabled)

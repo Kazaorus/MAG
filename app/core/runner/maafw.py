@@ -9,6 +9,7 @@ MFW-ChainFlow Assistant MaaFW核心
 import json
 import os
 import re
+import sys
 import importlib.util
 from enum import Enum
 from typing import List, Dict
@@ -61,11 +62,18 @@ from app.common.signal_bus import signalBus
 
 class MaaContextSink(ContextEventSink):
     def on_raw_notification(self, context: Context, msg: str, details: dict):
-        if detial := details.get("focus", {}).get(msg, ""):
+        if detial := (details.get("focus") or {}).get(msg, ""):
             detial = detial.replace("{name}", details.get("name", ""))
             detial = detial.replace("{task_id}", str(details.get("task_id", "")))
             detial = detial.replace("{list}", details.get("list", ""))
             signalBus.callback.emit({"name": "context", "details": detial})
+            if msg == "Node.Recognition.Succeeded" :
+                if details.get("Abort", False):
+                    signalBus.callback.emit({"name": "abort"})
+                if details.get("Notice", False):
+                    pass
+
+
 
     def on_node_next_list(
         self,
@@ -122,7 +130,6 @@ class MaaResourceEventSink(ResourceEventSink):
 class MaaTaskerEventSink(TaskerEventSink):
     def on_raw_notification(self, tasker: Tasker, msg: str, details: dict):
         pass
-        print(f"任务器原始信息:{msg},详细信息:{details}")
 
     def on_tasker_task(
         self,
@@ -232,12 +239,24 @@ class MaaFW(QObject):
             "recognitions": {"success": [], "failed": []},
         }
 
+        # 将custom_root的父目录添加到sys.path，以便模块可以使用绝对导入
+        # 例如：from MPAcustom.action.tool.LoadSetting 需要 MPAcustom 的父目录在 sys.path 中
+        # 同时也要添加custom_root本身，以便相对导入也能工作
+        custom_root_parent = str(custom_root.parent)
+        custom_root_str = str(custom_root)
+
+        # 添加父目录到sys.path（用于绝对导入，如 from MPAcustom.xxx）
+        if custom_root_parent not in sys.path:
+            sys.path.insert(0, custom_root_parent)
+            logger.debug(f"已将父目录 {custom_root_parent} 添加到 sys.path")
+
+        # 添加custom_root本身到sys.path（用于相对导入）
+        if custom_root_str not in sys.path:
+            sys.path.insert(0, custom_root_str)
+            logger.debug(f"已将 {custom_root_str} 添加到 sys.path")
+
         def _get_bucket(type_name: str) -> str | None:
-            if type_name == "action":
-                return "actions"
-            if type_name == "recognition":
-                return "recognitions"
-            return None
+            return {"action": "actions", "recognition": "recognitions"}.get(type_name)
 
         def _record_success(type_name: str, name: str):
             bucket = _get_bucket(type_name)
@@ -281,7 +300,19 @@ class MaaFW(QObject):
                 _record_failure(custom_type, custom_name, reason)
                 continue
 
+            # 使用文件名作为模块名，保持与custom内部引用一致
+            # 这样custom文件夹内部的代码可以使用 import custom 等正常引用
             module_name = Path(custom_file_path).stem
+
+            # 使用文件路径作为sys.modules的key，避免同名模块冲突
+            # 但模块的__name__仍然是文件名，这样custom内部的引用可以正常工作
+            module_key = str(custom_file_path)
+
+            # 如果该文件路径的模块已存在，先移除（可能是之前加载的）
+            if module_key in sys.modules:
+                logger.debug(f"移除已存在的模块缓存: {module_key}")
+                del sys.modules[module_key]
+
             spec = importlib.util.spec_from_file_location(module_name, custom_file_path)
             if spec is None or spec.loader is None:
                 reason = f"无法获取模块 {module_name} 的 spec，跳过加载"
@@ -291,6 +322,9 @@ class MaaFW(QObject):
 
             try:
                 module = importlib.util.module_from_spec(spec)
+                # 使用文件路径作为key存储到sys.modules，避免同名模块冲突
+                # 模块的__name__仍然是文件名，custom内部的引用可以正常工作
+                sys.modules[module_key] = module
                 spec.loader.exec_module(module)  # type: ignore[arg-type]
 
                 class_obj = getattr(module, custom_class_name, None)
@@ -301,8 +335,9 @@ class MaaFW(QObject):
                     continue
                 instance = class_obj()
             except Exception as exc:
+                # 使用 logger.exception 自动记录完整的堆栈信息
                 reason = f"加载自定义对象 {custom_name} 失败: {exc}"
-                logger.error(reason)
+                logger.exception(f"加载自定义对象 {custom_name} 失败")
                 _record_failure(custom_type, custom_name, reason, level="error")
                 continue
 
@@ -379,14 +414,7 @@ class MaaFW(QObject):
     @asyncify
     def detect_win32hwnd(window_regex: str) -> List[DesktopWindow]:
         windows = Toolkit.find_desktop_windows()
-        result = []
-        for win in windows:
-            if not re.search(window_regex, win.window_name):
-                continue
-
-            result.append(win)
-
-        return result
+        return [win for win in windows if re.search(window_regex, win.window_name)]
 
     @asyncify
     def connect_adb(
@@ -415,13 +443,11 @@ class MaaFW(QObject):
     @asyncify
     def connect_win32hwnd(
         self,
-        hwnd: int | str,
+        hwnd: int,
         screencap_method: int = MaaWin32ScreencapMethodEnum.DXGI_DesktopDup,
         mouse_method: int = MaaWin32InputMethodEnum.Seize,
         keyboard_method: int = MaaWin32InputMethodEnum.Seize,
     ) -> bool:
-        if isinstance(hwnd, str):
-            hwnd = int(hwnd, 16)
         screencap_method = (
             screencap_method or MaaWin32ScreencapMethodEnum.DXGI_DesktopDup
         )
@@ -522,8 +548,10 @@ class MaaFW(QObject):
         logger.debug(f"启动agent命令: {start_cmd}")
         # 如果是打包模式,使用utf8,否则使用gbk
         import os
+        import sys
 
-        is_packed = os.path.exists("./lrelease.py")
+        # 使用 sys.frozen 判断是否打包（PyInstaller 标准方式）
+        is_packed = getattr(sys, "frozen", False)
         encoding = "utf-8" if is_packed else "gbk"
         try:
             agent_process = subprocess.Popen(
@@ -571,7 +599,6 @@ class MaaFW(QObject):
         self,
         entry: str,
         pipeline_override: dict = {},
-        custom_dir: str | None = None,
         save_draw: bool = False,
     ) -> bool:
         if not self.resource or not self.controller:

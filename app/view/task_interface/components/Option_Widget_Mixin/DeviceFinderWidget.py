@@ -30,8 +30,11 @@ class DeviceFinderTask(QRunnable):
                 for device in devices:
                     # 尝试从设备 config 中携带的 ld pid 反查雷电序号
                     ld_pid = (
-                        getattr(device, "config", {}) or {}
-                    ).get("extras", {}).get("ld", {}).get("pid")
+                        (getattr(device, "config", {}) or {})
+                        .get("extras", {})
+                        .get("ld", {})
+                        .get("pid")
+                    )
                     device_index = EmulatorHelper.resolve_emulator_index(
                         device, ld_pid=ld_pid
                     )
@@ -40,6 +43,14 @@ class DeviceFinderTask(QRunnable):
                         if device_index is not None
                         else f"{device.name}({device.address})"
                     )
+                    # 自动生成模拟器运行路径和参数
+                    adb_path_str = str(device.adb_path) if device.adb_path else None
+                    emulator_path, emulator_params = (
+                        EmulatorHelper.generate_emulator_launch_info(
+                            device.name, device_index, adb_path_str
+                        )
+                    )
+
                     device_mapping[display_name] = {
                         "name": device.name,
                         "adb_path": device.adb_path,
@@ -48,6 +59,8 @@ class DeviceFinderTask(QRunnable):
                         "input_methods": device.input_methods,
                         "config": device.config,
                         "device_index": device_index,
+                        "emulator_path": emulator_path,
+                        "emulator_params": emulator_params,
                     }
 
             elif self.controller_type.lower() == "win32":
@@ -87,6 +100,10 @@ class DeviceFinderTask(QRunnable):
 
 
 class DeviceFinderWidget(QWidget):
+    # 当未找到任何设备时发出的信号
+    # 参数为当前控制器类型字符串，例如 "adb" 或 "win32"
+    no_device_found = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._init_ui()
@@ -137,10 +154,15 @@ class DeviceFinderWidget(QWidget):
                     filtered[key] = device
             device_mapping = filtered
 
-        # 更新设备映射和下拉框
-        self.device_mapping = device_mapping
-        self.combo_box.clear()
-        self.combo_box.addItems(list(device_mapping.keys()))
+        # 如果没有找到任何设备，仅发出信号，不清空已有下拉框内容
+        if not device_mapping:
+            self.no_device_found.emit(controller_type)
+        else:
+            # 更新设备映射和下拉框
+            self.device_mapping = device_mapping
+            self.combo_box.clear()
+            self.combo_box.addItems(list(device_mapping.keys()))
+
         self.search_button.setEnabled(True)
 
     def _matches_win32_filters(self, device: dict) -> bool:

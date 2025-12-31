@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QDesktopServices, QPixmap, QFont
 from PySide6.QtWidgets import (
     QFrame,
     QSizePolicy,
@@ -48,15 +48,17 @@ from qfluentwidgets import (
 
 from app.utils.markdown_helper import render_markdown
 from app.widget.notice_message import NoticeMessageBox
-from app.common.config import cfg, isWin11
+from app.common.config import cfg, isWin11, Config
+from app.common.__version__ import __version__ as UI_VERSION
 from app.common.signal_bus import signalBus
 from app.core.core import ServiceCoordinator
 from app.utils.crypto import crypto_manager
 from app.utils.logger import logger
-from app.utils.update import Update, UpdateCheckTask
+from app.utils.update import Update
 from app.view.setting_interface.widget.ProxySettingCard import ProxySettingCard
 from app.utils.hotkey_manager import GlobalHotkeyManager
 from app.view.setting_interface.widget.SliderSettingCard import SliderSettingCard
+import sys
 from app.view.setting_interface.widget.LineEditCard import (
     LineEditCard,
     MirrorCdkLineEditCard,
@@ -65,14 +67,76 @@ from app.view.setting_interface.widget.NoticeType import (
     QYWXNoticeType,
     DingTalkNoticeType,
     LarkNoticeType,
-    QmsgNoticeType,
     SMTPNoticeType,
     WxPusherNoticeType,
+    NoticeTimingDialog,
 )
 
-from app.view.setting_interface.widget.SendSettingCard import SendSettingCard
-
 _CONTACT_URL_PATTERN = re.compile(r"(?:https?://|www\.)[^\s，,]+")
+# 检测已经是 Markdown 链接格式的文本： [text](url)
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def start_auto_confirm_countdown(
+    dialog: MessageBoxBase,
+    label: BodyLabel,
+    seconds: int,
+    yes_button,
+    template: str,
+    *,
+    logger_prefix: str = "",
+) -> None:
+    """通用的自动确认倒计时工具函数。
+
+    由设置页与主界面复用，避免重复实现。
+    """
+    base_yes_text = yes_button.text() if yes_button else ""
+    prefix = f"{logger_prefix} " if logger_prefix else ""
+    logger.info("%s倒计时开始: %ss, 文案模板=%s", prefix.strip(), seconds, template)
+
+    def tick(remaining: int):
+        if not dialog.isVisible():
+            logger.debug("%s倒计时终止：对话框已关闭", prefix.strip())
+            return
+        label.setText(template.replace("%1", str(remaining)))
+        if yes_button:
+            yes_button.setText(
+                f"{base_yes_text} ({remaining}s)" if remaining >= 0 else base_yes_text
+            )
+        if remaining <= 0:
+            if yes_button:
+                yes_button.setText(base_yes_text)
+            logger.info("%s倒计时结束，自动确认/点击", prefix.strip())
+            dialog.accept()
+            return
+        QTimer.singleShot(1000, lambda: tick(remaining - 1))
+
+    QTimer.singleShot(0, lambda: tick(seconds))
+
+
+def rename_updater_binary(old_name: str, new_name: str) -> None:
+    """重命名更新器二进制文件，供各界面复用。"""
+    import os
+
+    if os.path.exists(old_name) and os.path.exists(new_name):
+        os.remove(new_name)
+    if os.path.exists(old_name):
+        os.rename(old_name, new_name)
+
+
+def launch_updater_process() -> None:
+    """启动更新器进程的底层实现，由调用方负责异常处理/提示。"""
+    import sys
+    import subprocess
+
+    if sys.platform.startswith("win32"):
+        logger.info("启动更新程序: ./MFWUpdater1.exe -update")
+        subprocess.Popen(["./MFWUpdater1.exe", "-update"])
+    elif sys.platform.startswith(("darwin", "linux")):
+        logger.info("启动更新程序: ./MFWUpdater1 -update")
+        subprocess.Popen(["./MFWUpdater1", "-update"])
+    else:
+        raise NotImplementedError("Unsupported platform")
 
 
 class SettingInterface(QWidget):
@@ -111,7 +175,8 @@ class SettingInterface(QWidget):
         )
         self.description = self.interface_data.get("description", "")
         self._updater: Optional[Update] = None
-        self._update_checker: Optional[UpdateCheckTask] = None
+        # 使用 Update 本身作为“仅检查更新”的线程对象（check_only=True）
+        self._update_checker: Optional[Update] = None
         self._latest_update_check_result: str | bool | None = None
         self._updater_started = False
         self._local_update_package: Path | None = None
@@ -133,8 +198,24 @@ class SettingInterface(QWidget):
             restart_required=True
         )
         if self._local_update_package:
-            logger.info("检测到本地更新包，跳过检查更新流程")
+            logger.info("检测到本地更新包，准备立即更新状态")
+            # 准备立即更新状态：将更新按钮改为"立刻更新"
+            self._prepare_instant_update_state(restart_required=True)
+            # 如果自动更新打开，自动触发"立刻更新"
+            if self._is_auto_update_enabled():
+                logger.info("自动更新已开启，自动触发立即更新")
+                QTimer.singleShot(
+                    0,
+                    lambda: self._handle_instant_update(
+                        auto_accept=True, notify_if_cancel=True
+                    ),
+                )
+            else:
+                # 如果自动更新关闭，发送信号给 main_window 检查是否需要立刻运行
+                logger.info("自动更新未开启，通知 main_window 检查是否需要自动运行")
+                signalBus.check_auto_run_after_update_cancel.emit()
         self._init_update_checker()
+
     def connect_notice_card_clicked(self):
         # 连接通知卡片的点击事件
         self.dingtalk_noticeTypeCard.clicked.connect(self._on_dingtalk_notice_clicked)
@@ -142,7 +223,8 @@ class SettingInterface(QWidget):
         self.SMTP_noticeTypeCard.clicked.connect(self._on_smtp_notice_clicked)
         self.WxPusher_noticeTypeCard.clicked.connect(self._on_wxpusher_notice_clicked)
         self.QYWX_noticeTypeCard.clicked.connect(self._on_qywx_notice_clicked)
-        self.send_settingCard.clicked.connect(self._on_send_setting_clicked)
+        self.notice_timing_card.clicked.connect(self._on_notice_timing_clicked)
+
     def _setup_ui(self):
         """搭建整体结构：标题 + 更新详情 + 滚动区域 + ExpandLayout。"""
         self.main_layout = QVBoxLayout(self)
@@ -175,6 +257,7 @@ class SettingInterface(QWidget):
         self.initialize_hotkey_settings()
         self.initialize_update_settings()
         self.initialize_compatibility_settings()
+        # 初次进入时根据当前配置刷新一次头部信息
         self._refresh_update_header()
 
         self.main_layout.addWidget(self.scroll_area)
@@ -198,10 +281,20 @@ class SettingInterface(QWidget):
         label.setText(render_markdown(content))
 
     def _linkify_contact_urls(self, contact: str) -> str:
-        """把联系方式中的网址转换成 Markdown 超链接。"""
+        """
+        把联系方式中的网址转换成 Markdown 超链接。
+
+        如果文本中已经包含 Markdown 链接格式（如 [text](url)），则跳过这些部分，
+        只对剩余的裸 URL 进行自动转换。
+        """
         if not contact:
             return contact
 
+        # 如果文本中已经包含 Markdown 链接格式，直接返回（避免重复处理）
+        if _MARKDOWN_LINK_PATTERN.search(contact):
+            return contact
+
+        # 否则，对裸 URL 进行自动转换
         def replace(match: re.Match[str]) -> str:
             url = match.group(0)
             href = url if url.startswith(("http://", "https://")) else f"http://{url}"
@@ -227,7 +320,8 @@ class SettingInterface(QWidget):
         self.icon_label = QLabel(self)
         self.icon_label.setFixedSize(72, 72)
         self._apply_header_icon("app/assets/icons/logo.png")
-        top_row.addWidget(self.icon_label)
+        # 图标整体在该行内顶部对齐
+        top_row.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignTop)
 
         info_column = QVBoxLayout()
         info_column.setSpacing(6)
@@ -247,13 +341,9 @@ class SettingInterface(QWidget):
         top_row.addLayout(info_column)
         header_layout.addLayout(top_row)
 
-        self.version_label = BodyLabel(
-            self.tr("Version:") + " " + self.interface_data.get("version", "0.0.1"),
-            self,
-        )
+        # 版本信息统一放到一行里展示：当前版本 / 最新版本 / UI版本 / MaaFW版本
+        self.version_label = BodyLabel("", self)
         self.version_label.setStyleSheet("color: rgba(255, 255, 255, 0.7);")
-        self.last_version_label = BodyLabel("", self)
-        self.last_version_label.setStyleSheet("color: rgba(255, 255, 255, 0.7);")
 
         self.detail_progress = QProgressBar(self)
         self.detail_progress.setRange(0, 100)
@@ -270,7 +360,6 @@ class SettingInterface(QWidget):
         version_column = QVBoxLayout()
         version_column.setSpacing(4)
         version_column.addWidget(self.version_label)
-        version_column.addWidget(self.last_version_label)
         version_layout.addLayout(version_column)
         self.detail_progress_placeholder = QWidget(self)
         self.detail_progress_placeholder.setSizePolicy(
@@ -417,9 +506,10 @@ class SettingInterface(QWidget):
         dialog.exec()
 
     def _open_github_home(self):
-        if not self._github_url:
-            return
-        QDesktopServices.openUrl(QUrl(self._github_url))
+        """
+        打开 MFW-ChainFlow Assistant 的 GitHub 仓库（固定地址，与当前 interface 无关）。
+        """
+        QDesktopServices.openUrl(QUrl("https://github.com/overflow65537/MFW-PyQt6"))
 
     def _apply_header_icon(self, icon_path: Optional[str] = None) -> None:
         """加载 interface 中提供的图标路径，失败时回退到默认 logo。"""
@@ -440,7 +530,9 @@ class SettingInterface(QWidget):
 
     def _open_update_log(self):
         """打开更新日志对话框"""
-        release_notes = self._load_release_notes()
+        # 获取项目名称，用于加载对应的更新日志
+        project_name = self._get_project_name()
+        release_notes = self._load_release_notes(project_name)
 
         if not release_notes:
             # 如果没有本地更新日志，显示提示信息
@@ -782,7 +874,7 @@ class SettingInterface(QWidget):
             self.tr("Start task shortcut"),
             holderText=start_value,
             content=self.tr(
-                "Default Ctrl+`, can also trigger when focus is not on the main window"
+                "Default Ctrl+F1, can also trigger when focus is not on the main window"
             ),
             parent=self.hotkeyGroup,
             num_only=False,
@@ -790,7 +882,7 @@ class SettingInterface(QWidget):
         self._decorate_shortcut_card(self.start_shortcut_card, self.tr("Ctrl+"))
         self._set_shortcut_line_text(self.start_shortcut_card, start_value)
         self.start_shortcut_card.lineEdit.setPlaceholderText(
-            self.tr("Format: Modifier+[Key], e.g. Ctrl+`")
+            self.tr("Format: Modifier+[Key], e.g. Ctrl+F1")
         )
         self.start_shortcut_card.lineEdit.editingFinished.connect(
             lambda: self._on_shortcut_card_edited(
@@ -804,14 +896,14 @@ class SettingInterface(QWidget):
             FIF.RIGHT_ARROW,
             self.tr("Stop task shortcut"),
             holderText=stop_value,
-            content=self.tr("Default Alt+`, used to interrupt tasks in advance"),
+            content=self.tr("Default Alt+F1, used to interrupt tasks in advance"),
             parent=self.hotkeyGroup,
             num_only=False,
         )
         self._decorate_shortcut_card(self.stop_shortcut_card, self.tr("Alt+"))
         self._set_shortcut_line_text(self.stop_shortcut_card, stop_value)
         self.stop_shortcut_card.lineEdit.setPlaceholderText(
-            self.tr("Format: Modifier+[Key], e.g. Alt+`")
+            self.tr("Format: Modifier+[Key], e.g. Alt+F1")
         )
         self.stop_shortcut_card.lineEdit.editingFinished.connect(
             lambda: self._on_shortcut_card_edited(
@@ -824,6 +916,50 @@ class SettingInterface(QWidget):
         self.hotkeyGroup.addSettingCard(self.start_shortcut_card)
         self.hotkeyGroup.addSettingCard(self.stop_shortcut_card)
         self.add_setting_group(self.hotkeyGroup)
+
+        # 检测权限并禁用设置（如果权限不足）
+        self._check_and_disable_hotkey_settings()
+
+    def _check_and_disable_hotkey_settings(self):
+        """检测全局快捷键权限，如果不可用则禁用设置界面。"""
+        try:
+            # 创建一个临时的 GlobalHotkeyManager 来检测权限
+            import asyncio
+
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = None
+            temp_manager = GlobalHotkeyManager(loop)
+            has_permission = temp_manager.check_permission()
+
+            if not has_permission:
+                # 禁用快捷键设置
+                if hasattr(self, "start_shortcut_card"):
+                    self.start_shortcut_card.setEnabled(False)
+                    self.start_shortcut_card.lineEdit.setEnabled(False)
+                    # 修改描述文本
+                    if hasattr(self.start_shortcut_card, "contentLabel"):
+                        self.start_shortcut_card.contentLabel.setText(
+                            self.tr("Permission denied, shortcuts disabled")
+                        )
+                    self.start_shortcut_card.lineEdit.setPlaceholderText(
+                        self.tr("Permission denied, shortcuts disabled")
+                    )
+                if hasattr(self, "stop_shortcut_card"):
+                    self.stop_shortcut_card.setEnabled(False)
+                    self.stop_shortcut_card.lineEdit.setEnabled(False)
+                    # 修改描述文本
+                    if hasattr(self.stop_shortcut_card, "contentLabel"):
+                        self.stop_shortcut_card.contentLabel.setText(
+                            self.tr("Permission denied, shortcuts disabled")
+                        )
+                    self.stop_shortcut_card.lineEdit.setPlaceholderText(
+                        self.tr("Permission denied, shortcuts disabled")
+                    )
+                logger.info("快捷键设置界面已禁用（权限不足）")
+        except Exception as exc:
+            logger.warning("检测快捷键权限失败: %s", exc)
 
     def _on_shortcut_card_edited(
         self,
@@ -972,20 +1108,22 @@ class SettingInterface(QWidget):
             parent=self.noticeGroup,
         )
 
-        self.send_settingCard = PrimaryPushSettingCard(
-            text=self.tr("Modify"),
-            icon=FIF.SEND,
-            title=self.tr("Send Setting"),
-            content=self.tr("Choose the timing to send notifications"),
-            parent=self.noticeGroup,
-        )
-
         self.noticeGroup.addSettingCard(self.dingtalk_noticeTypeCard)
         self.noticeGroup.addSettingCard(self.lark_noticeTypeCard)
         self.noticeGroup.addSettingCard(self.SMTP_noticeTypeCard)
         self.noticeGroup.addSettingCard(self.WxPusher_noticeTypeCard)
         self.noticeGroup.addSettingCard(self.QYWX_noticeTypeCard)
-        self.noticeGroup.addSettingCard(self.send_settingCard)
+
+        # 添加通知时机设置按钮
+        self.notice_timing_card = PrimaryPushSettingCard(
+            text=self.tr("Configure"),
+            icon=FIF.SETTING,
+            title=self.tr("Notification Timing"),
+            content=self.tr("Configure when to send notifications"),
+            parent=self.noticeGroup,
+        )
+        self.noticeGroup.addSettingCard(self.notice_timing_card)
+
         self.add_setting_group(self.noticeGroup)
 
     def initialize_task_settings(self):
@@ -994,67 +1132,17 @@ class SettingInterface(QWidget):
             self.tr("Task Settings"), self.Setting_scroll_widget
         )
 
-        # 开启任务超时设置
-        self.task_timeout_enable_card = SwitchSettingCard(
-            FIF.SETTING,
-            self.tr("Enable Task Timeout"),
-            self.tr("Enable or disable task timeout settings"),
-            configItem=cfg.task_timeout_enable,
+        # 低功耗监控模式
+        self.low_power_monitoring_mode_card = SwitchSettingCard(
+            FIF.POWER_BUTTON,
+            self.tr("Low Power Monitoring Mode"),
+            self.tr("Use cached images instead of dedicated monitoring thread, refresh rate: 24 FPS"),
+            configItem=cfg.low_power_monitoring_mode,
             parent=self.taskGroup,
         )
 
-        # 任务超时时间
-        self.task_timeout_card = LineEditCard(
-            FIF.SETTING,
-            self.tr("Task Timeout"),
-            holderText=str(cfg.get(cfg.task_timeout)),
-            content=self.tr(
-                "Set the maximum time allowed for a task to run (in seconds)"
-            ),
-            parent=self.taskGroup,
-            num_only=True,
-            button=False,
-        )
-        self.task_timeout_card.lineEdit.editingFinished.connect(
-            lambda: self._on_task_timeout_edited()
-        )
-
-        # 任务超时后动作
-        self.task_timeout_action_card = ComboBoxSettingCard(
-            cfg.task_timeout_action,
-            FIF.SETTING,
-            self.tr("Task Timeout Action"),
-            self.tr("Set the action to take when a task times out"),
-            texts=[
-                self.tr("Notify Only"),  # 0
-                self.tr("Restart and Notify"),  # 1
-            ],
-            parent=self.taskGroup,
-        )
-
-        self.taskGroup.addSettingCard(self.task_timeout_enable_card)
-        self.taskGroup.addSettingCard(self.task_timeout_card)
-        self.taskGroup.addSettingCard(self.task_timeout_action_card)
+        self.taskGroup.addSettingCard(self.low_power_monitoring_mode_card)
         self.add_setting_group(self.taskGroup)
-
-    def _on_task_timeout_edited(self):
-        """处理任务超时时间编辑完成事件"""
-        value = self.task_timeout_card.lineEdit.text().strip()
-        if not value:
-            # 若输入为空，恢复默认值
-            self.task_timeout_card.lineEdit.setText(str(cfg.get(cfg.task_timeout)))
-            return
-
-        try:
-            timeout = int(value)
-            if timeout <= 0:
-                raise ValueError("Timeout must be a positive integer")
-            cfg.set(cfg.task_timeout, timeout)
-        except ValueError:
-            # 若输入无效，恢复默认值
-            self.task_timeout_card.lineEdit.setText(str(cfg.get(cfg.task_timeout)))
-
-
 
     def initialize_update_settings(self):
         """插入更新设置卡片组（跟原先的 UpdateSettingsSection 等价）。"""
@@ -1161,7 +1249,6 @@ class SettingInterface(QWidget):
             cfg.multi_resource_adaptation,
             self.compatibility_group,
         )
-        self.multi_resource_adaptation_card.setVisible(False)  # 默认隐藏
 
         self.save_screenshot_card = SwitchSettingCard(
             FIF.SAVE_AS,
@@ -1237,35 +1324,77 @@ class SettingInterface(QWidget):
             return ""
 
     def _onMirrorCardChange(self):
+        """处理 Mirror CDK 输入变化，检查并删除行尾空格后保存。"""
+        current_text = self.MirrorCard.lineEdit.text()
+
+        # 检查行尾是否有空格，如果有则删除
+        if current_text and current_text.rstrip() != current_text:
+            # 删除行尾空格
+            cleaned_text = current_text.rstrip()
+            # 更新输入框内容（不触发信号，避免循环）
+            self.MirrorCard.lineEdit.blockSignals(True)
+            self.MirrorCard.lineEdit.setText(cleaned_text)
+            self.MirrorCard.lineEdit.blockSignals(False)
+            current_text = cleaned_text
+
+        # 保存配置
         try:
-            encrypted = crypto_manager.encrypt_payload(self.MirrorCard.lineEdit.text())
+            encrypted = crypto_manager.encrypt_payload(current_text)
             encrypted_value = (
                 encrypted.decode("utf-8", errors="ignore")
                 if isinstance(encrypted, bytes)
                 else str(encrypted)
             )
             cfg.set(cfg.Mcdk, encrypted_value)
+            logger.info("Mirror CDK 已保存")
         except Exception as exc:
             logger.error("加密 Mirror CDK 失败: %s", exc)
+            signalBus.info_bar_requested.emit(
+                "error", self.tr("Failed to save Mirror CDK: {}").format(str(exc))
+            )
             return
 
     def _on_github_api_key_change(self, text: str):
         cfg.set(cfg.github_api_key, str(text).strip())
 
-    def _refresh_update_header(self):
+    def _refresh_header_from_interface(self) -> None:
+        """
+        使用当前任务的 interface 数据刷新头部展示（资源信息视角）。
+        """
+        # 每次刷新时都从服务协调器重新获取一次最新的 interface 数据，避免使用旧缓存
+        latest_metadata = self._get_interface_metadata()
+        if latest_metadata:
+            self.interface_data = latest_metadata
         metadata = self.interface_data or {}
         icon_path = metadata.get("icon", "")
         name = metadata.get("name", "")
-        version = metadata.get("version", "0.0.1")
-        last_version = cfg.get(cfg.latest_update_version)
+        # 保存项目名称，用于更新日志等功能
+        self.name = name if name else "MFW_CFA"
+        current_version = metadata.get("version", "0.0.1")
+        last_version = cfg.get(cfg.latest_update_version) or current_version
         license_value = metadata.get("license", "None License")
         github = metadata.get("github", metadata.get("url", ""))
         description = metadata.get("description", "")
         contact = metadata.get("contact", "")
 
         self.resource_name_label.setText(name)
-        self.version_label.setText(self.tr("Version:") + " " + version)
-        self._set_last_version_label(last_version)
+        # 当前版本 / 最新版本 / UI版本 / MaaFW版本 水平展示
+        from maa.library import Library
+
+        maafw_version = Library.version()
+        self.version_label.setText(
+            self.tr("Current version: ")
+            + str(current_version)
+            + "    "
+            + self.tr("Latest version: ")
+            + str(last_version)
+            + "    "
+            + self.tr("UI version: ")
+            + str(UI_VERSION)
+            + "    "
+            + self.tr("MaaFW version: ")
+            + maafw_version
+        )
         self._apply_markdown_to_label(self.description_label, description)
         self._apply_markdown_to_label(
             self.contact_label, self._linkify_contact_urls(contact)
@@ -1275,9 +1404,66 @@ class SettingInterface(QWidget):
         self.license_button.setText(self.tr("License"))
         self._apply_header_icon(icon_path)
 
-    def _set_last_version_label(self, version: str | None):
-        version_text = version or self.tr("N/A")
-        self.last_version_label.setText(self.tr("Last version:") + " " + version_text)
+    def _refresh_header_as_mfw(self) -> None:
+        """
+        使用「MFW-ChainFlow Assistant」本体的信息刷新头部展示（宿主应用视角）。
+        """
+        icon_path = "app/assets/icons/logo.png"
+        name = self.tr("MFW-ChainFlow Assistant")
+        self.name = "MFW_CFA"
+        # 当前版本使用 UI 本体版本号
+        current_version = UI_VERSION
+        license_value = "GNU General Public License v3.0"
+        for license in ["MFW_LICENSE", "LICENSE"]:
+            if Path(license).is_file():
+                with open(license, "r", encoding="utf-8") as f:
+                    license_value = f.read()
+                break
+
+        github = "https://github.com/overflow65537/MFW-PyQt6"
+        description = self.tr(
+            "MFW-ChainFlow Assistant provides a visual orchestrator for MaaFramework "
+            "users, covering configuration management, scheduling, notifications and "
+            "custom extensions."
+        )
+        # 使用 html 格式化的联系方式，方便点击跳转
+        contact = (
+            "[GitHub](https://github.com/overflow65537/MFW-PyQt6)  ·  "
+            "[Issues](https://github.com/overflow65537/MFW-PyQt6/issues)"
+        )
+
+        self.resource_name_label.setText(name)
+        # 当前版本 / 最新版本 / UI版本 / MaaFW版本 水平展示
+        from maa.library import Library
+
+        maafw_version = Library.version()
+        self.version_label.setText(
+            self.tr("Current version: ")
+            + str(current_version)
+            + "    "
+            + self.tr("MaaFW version: ")
+            + maafw_version
+        )
+        self._apply_markdown_to_label(self.description_label, description)
+        self._apply_markdown_to_label(
+            self.contact_label, self._linkify_contact_urls(contact)
+        )
+        self._github_url = github
+        self._license_content = license_value
+        self.license_button.setText(self.tr("License"))
+        self._apply_header_icon(icon_path)
+
+    def _refresh_update_header(self) -> None:
+        """
+        根据多资源适配开关，在「资源信息」与「MFW 信息」之间切换头部展示。
+
+        - multi_resource_adaptation = False: 显示当前任务资源的 interface 信息
+        - multi_resource_adaptation = True: 显示 MFW-ChainFlow Assistant 本体信息
+        """
+        if cfg.get(cfg.multi_resource_adaptation):
+            self._refresh_header_as_mfw()
+        else:
+            self._refresh_header_from_interface()
 
     def _get_interface_metadata(self):
         """从服务协调器的任务服务获取 interface 数据。"""
@@ -1285,6 +1471,29 @@ class SettingInterface(QWidget):
             return {}
         interface_data = getattr(self._service_coordinator.task, "interface", None)
         return interface_data or {}
+
+    def _get_project_name(self) -> str:
+        """获取当前项目名称，用于更新日志等功能。
+
+        优先使用已保存的 self.name，如果不存在则从 interface 数据中获取。
+
+        Returns:
+            项目名称，如果无法获取则返回默认值 "MFW_CFA"
+        """
+        # 如果已经设置了 self.name，直接使用
+        if hasattr(self, "name") and self.name:
+            return self.name
+
+        # 否则从 interface 数据中获取
+        metadata = self._get_interface_metadata()
+        name = metadata.get("name", "")
+        if name:
+            # 保存到 self.name 以便后续使用
+            self.name = name
+            return name
+
+        # 如果都获取不到，返回默认值
+        return "MFW_CFA"
 
     def _apply_theme_from_config(self):
         """确保设置界面初始化时与全局主题同步。"""
@@ -1309,8 +1518,19 @@ class SettingInterface(QWidget):
         font = self.font()
         base_size = font.pointSize()
         if base_size <= 0:
-            base_size = 10
-        font.setPointSize(base_size + 2)
+            # 如果 pointSize() 返回 -1，说明字体使用像素大小模式
+            # 在这种情况下，创建一个新的使用点大小的字体对象
+            pixel_size = font.pixelSize()
+            if pixel_size > 0:
+                # 像素大小转点大小的近似转换（1 点 ≈ 1.33 像素）
+                base_size = max(10, int(pixel_size * 0.75))
+            else:
+                base_size = 10
+            # 创建新字体，明确使用点大小模式
+            font = QFont(font.family(), base_size + 2)
+        else:
+            # 字体已使用点大小模式，直接增加点大小
+            font.setPointSize(base_size + 2)
         self.setFont(font)
 
     def _choose_background_image(self):
@@ -1331,8 +1551,364 @@ class SettingInterface(QWidget):
             return
         self._update_background_image("")
 
+    def _on_update_ui_clicked(self) -> None:
+        """更新 UI 按钮点击回调，占位接口，后续可在此实现 UI 更新逻辑。"""
+        # TODO: 在此处实现 UI 更新的具体行为（如检查并更新前端资源等）
+        signalBus.info_bar_requested.emit(
+            "info",
+            self.tr("UI update feature is not implemented yet."),
+        )
+
+    def run_multi_resource_post_enable_tasks(self) -> None:
+        """开启多资源适配后执行的后续操作占位方法。
+
+        当前仅作为占位，后续可在此实现多配置资源目录重建等逻辑。
+
+        注意：此方法具有幂等性，即使重复调用也不会重复执行迁移操作。
+        """
+        # 启用多资源适配后，显示"更新 UI"按钮，并通知主界面刷新标题等信息，
+        # 同时隐藏多资源适配开关，避免重复误操作。
+        self.multi_resource_adaptation_card.setEnabled(False)
+        self.reset_resource_card.setEnabled(False)
+        signalBus.title_changed.emit()
+        self._refresh_update_header()
+
+        # 检查是否已经迁移过，避免重复执行迁移操作
+        if self._is_bundle_migration_completed():
+            logger.info("检测到 bundle 迁移已完成，跳过迁移操作")
+        else:
+            logger.info("开始执行 bundle 迁移操作")
+            self._move_bundle()
+
+    def _is_bundle_migration_completed(self) -> bool:
+        """
+        检查 bundle 迁移是否已完成。
+
+        通过检查以下条件判断：
+        1. bundle 目录是否存在且包含文件
+        2. multi_config.json 中是否已配置了 bundle 路径
+
+        Returns:
+            True 如果迁移已完成，False 如果未完成
+        """
+        # 读取 interface.json 获取项目名称
+        interface_file = Path.cwd() / "interface.json"
+        if not interface_file.exists():
+            logger.debug("未找到 interface.json，无法检查迁移状态")
+            return False
+
+        try:
+            with open(interface_file, "r", encoding="utf-8") as f:
+                interface = json.load(f)
+        except Exception as e:
+            logger.warning(f"读取 interface.json 失败: {e}，无法检查迁移状态")
+            return False
+
+        name = interface.get("name", "")
+        if not name:
+            logger.debug("interface.json 中未找到 name 字段，无法检查迁移状态")
+            return False
+
+        # 检查 bundle 目录是否存在且包含文件
+        bundle_dir = Path.cwd() / "bundle" / name
+        if bundle_dir.exists() and bundle_dir.is_dir():
+            # 检查目录中是否有文件（排除隐藏文件和目录本身）
+            has_files = any(
+                item.is_file() and not item.name.startswith(".")
+                for item in bundle_dir.iterdir()
+            )
+            if has_files:
+                logger.debug(f"检测到 bundle 目录已存在且包含文件: {bundle_dir}")
+                # 进一步检查配置是否已更新
+                if self._is_bundle_config_updated(name):
+                    logger.debug("bundle 配置已更新，迁移已完成")
+                    return True
+
+        return False
+
+    def _is_bundle_config_updated(self, bundle_name: str) -> bool:
+        """
+        检查 multi_config.json 中是否已配置了指定 bundle 的路径。
+
+        Args:
+            bundle_name: bundle 名称
+
+        Returns:
+            True 如果配置已更新，False 如果未更新
+        """
+        if not self._service_coordinator:
+            return False
+
+        try:
+            main_config_path = self._service_coordinator.config_repo.main_config_path
+            if not main_config_path.exists():
+                return False
+
+            with open(main_config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+
+            # 检查 bundle 配置是否存在且路径正确
+            bundle_config = config_data.get("bundle", {})
+            if not isinstance(bundle_config, dict):
+                return False
+
+            bundle_info = bundle_config.get(bundle_name)
+            if not isinstance(bundle_info, dict):
+                return False
+
+            bundle_path = bundle_info.get("path", "")
+            expected_path = f"./bundle/{bundle_name}"
+
+            # 路径匹配（支持相对路径和绝对路径的变体）
+            if bundle_path == expected_path or bundle_path.endswith(
+                f"/bundle/{bundle_name}"
+            ):
+                logger.debug(
+                    f"检测到 bundle 配置已更新: {bundle_name} -> {bundle_path}"
+                )
+                return True
+
+        except Exception as e:
+            logger.warning(f"检查 bundle 配置时出错: {e}")
+            return False
+
+        return False
+
+    def _update_bundle_config_internal(self, name: str, bundle_dir: Path):
+        """
+        更新 multi_config.json 中的 bundle 配置（内部方法）。
+
+        在文件移动到 bundle 目录后，更新主配置文件中对应 bundle 的路径。
+
+        Args:
+            name: bundle 名称（从 interface.json 中获取）
+            bundle_dir: bundle 目录路径
+        """
+        if not self._service_coordinator:
+            logger.error("service_coordinator 未初始化，无法更新 bundle 配置")
+            return
+
+        if not name:
+            logger.error("bundle 名称为空，无法更新配置")
+            return
+
+        # 检查当前配置中的路径
+        current_path = None
+        try:
+            bundle_info = self._service_coordinator.config_service.get_bundle(name)
+            current_path = bundle_info.get("path", "")
+        except (FileNotFoundError, Exception) as e:
+            logger.debug(f"获取当前 bundle 配置失败（可能不存在）: {e}")
+
+        # 构建新的 bundle 路径（相对于项目根目录）
+        bundle_path = f"./bundle/{name}"
+
+        # 如果当前路径是 "./" 或空，或者路径不正确，则强制更新
+        needs_update = False
+        if not current_path or current_path == "./" or current_path == ".":
+            logger.info(
+                f"检测到 bundle 路径为 '{current_path}'，需要更新为 '{bundle_path}'"
+            )
+            needs_update = True
+        elif current_path != bundle_path and not current_path.endswith(
+            f"/bundle/{name}"
+        ):
+            logger.info(
+                f"检测到 bundle 路径不正确 '{current_path}'，需要更新为 '{bundle_path}'"
+            )
+            needs_update = True
+        else:
+            logger.info(f"bundle 配置已正确，跳过更新: {name} -> {current_path}")
+            return
+
+        if needs_update:
+            # 更新 multi_config.json 中的 bundle 配置
+            success = self._service_coordinator.update_bundle_path(
+                bundle_name=name,
+                new_path=bundle_path,
+                bundle_display_name=name,
+            )
+
+            if success:
+                logger.info(f"已更新 bundle 配置: {name} -> {bundle_path}")
+            else:
+                logger.error(f"更新 bundle 配置失败: {name}")
+
+    def _move_bundle(self):
+        """
+        移动指定文件到 bundle 目录。
+
+        将当前目录下不在排除列表中的文件移动到 bundle/{name}/ 目录。
+        - 排除列表包括：bundle、release_notes、update、config、debug 等系统目录
+        - 以及 file_list.txt 中列出的文件（这些是 MFW 本体文件，不应移动）
+
+        注意：此方法具有幂等性，如果目标目录已存在且包含文件，会跳过迁移。
+        """
+        import shutil
+
+        # 排除目标（系统目录和关键文件）
+        exclude_names = {
+            "bundle",
+            "release_notes",
+            "update",
+            "config",
+            "debug",
+            "MFW_Updater1.exe",
+            "MFW_Updater1",
+            "file_list.txt",  # 排除列表文件本身
+        }
+
+        # 读取 interface.json 获取项目名称
+        interface_file = Path.cwd() / "interface.json"
+        if not interface_file.exists():
+            logger.error("未找到 interface.json，无法确定 bundle 目录名称")
+            return
+
+        try:
+            with open(interface_file, "r", encoding="utf-8") as f:
+                interface = json.load(f)
+        except Exception as e:
+            logger.error(f"读取 interface.json 失败: {e}")
+            return
+
+        name = interface.get("name", "")
+        if not name:
+            logger.error("interface.json 中未找到 name 字段")
+            return
+
+        bundle_dir = Path.cwd() / "bundle" / name
+
+        # 检查是否已经迁移过：如果目标目录已存在且包含文件，则跳过迁移，但仍需更新配置
+        skip_migration = False
+        if bundle_dir.exists() and bundle_dir.is_dir():
+            has_files = any(
+                item.is_file() and not item.name.startswith(".")
+                for item in bundle_dir.iterdir()
+            )
+            if has_files:
+                logger.info(
+                    f"检测到 bundle 目录已存在且包含文件，跳过迁移: {bundle_dir}"
+                )
+                skip_migration = True
+
+        if not skip_migration:
+            bundle_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"准备将文件移动到: {bundle_dir}")
+
+        # 读取 file_list.txt，构建排除文件路径集合
+        # file_list.txt 中包含的是文件路径（相对或绝对），需要转换为规范化的路径集合
+        # 注意：只排除 file_list.txt 中列出的确切路径，不排除同名文件
+        excluded_file_paths = set()
+        file_list_path = Path.cwd() / "file_list.txt"
+        if file_list_path.exists():
+            try:
+                with open(file_list_path, "r", encoding="utf-8") as f:
+                    file_list = [line.strip() for line in f.readlines() if line.strip()]
+                for file_path_str in file_list:
+                    file_path = Path(file_path_str)
+                    # 如果是相对路径，转换为绝对路径
+                    if not file_path.is_absolute():
+                        file_path = Path.cwd() / file_path
+                    # 规范化路径并添加到排除集合
+                    if file_path.exists() and file_path.is_file():
+                        excluded_file_paths.add(file_path.resolve())
+                        logger.debug(f"排除文件（完整路径）: {file_path.resolve()}")
+            except Exception as e:
+                logger.warning(f"读取 file_list.txt 失败: {e}，继续执行")
+
+        def _should_exclude_path(path: Path) -> bool:
+            """检查路径是否应该被排除"""
+            # 首先检查文件名是否在系统排除列表中（系统目录和关键文件）
+            if path.name in exclude_names:
+                return True
+            # 然后检查完整路径是否在 file_list.txt 中（只排除确切路径，不排除同名文件）
+            resolved_path = path.resolve()
+            if resolved_path in excluded_file_paths:
+                return True
+            return False
+
+        def _has_movable_content(dir_path: Path) -> bool:
+            """检查目录内是否有需要移动的内容（不在排除列表且不在 file_list.txt 中）"""
+            try:
+                for item in dir_path.rglob("*"):
+                    # 跳过目录本身
+                    if item == dir_path:
+                        continue
+                    # 只检查文件
+                    if item.is_file():
+                        if not _should_exclude_path(item):
+                            return True
+            except Exception as e:
+                logger.warning(f"检查目录内容时出错 {dir_path}: {e}")
+            return False
+
+        # 遍历当前目录下的所有文件和目录（如果跳过迁移，则不需要移动文件）
+        moved_count = 0
+        if skip_migration:
+            logger.info("跳过文件移动，直接更新配置")
+        else:
+            for item in Path.cwd().iterdir():
+                # 跳过排除列表中的项目
+                if item.name in exclude_names:
+                    logger.debug(f"跳过排除项: {item.name}")
+                    continue
+
+                # 处理目录：检查目录内容，如果有需要移动的内容则移动整个目录
+                if item.is_dir():
+                    if _has_movable_content(item):
+                        # 目录内包含需要移动的内容，移动整个目录
+                        try:
+                            target_path = bundle_dir / item.name
+                            # 如果目标已存在，先删除或重命名
+                            if target_path.exists():
+                                logger.warning(
+                                    f"目标目录已存在: {target_path}，将被覆盖"
+                                )
+                                if target_path.is_dir():
+                                    shutil.rmtree(target_path)
+                                else:
+                                    target_path.unlink()
+
+                            shutil.move(str(item), str(bundle_dir))
+                            moved_count += 1
+                            logger.info(f"已移动目录: {item.name} -> {bundle_dir}")
+                        except Exception as e:
+                            logger.error(f"移动目录失败 {item.name}: {e}")
+                    else:
+                        logger.debug(f"跳过目录（无需要移动的内容）: {item.name}")
+                    continue
+
+                # 移动文件到 bundle 目录
+                try:
+                    # 检查文件是否在 file_list.txt 中（完整路径检查）
+                    if _should_exclude_path(item):
+                        logger.debug(f"跳过文件（在排除列表中）: {item.name}")
+                        continue
+
+                    target_path = bundle_dir / item.name
+                    # 如果目标已存在，先删除或重命名
+                    if target_path.exists():
+                        logger.warning(f"目标文件已存在: {target_path}，将被覆盖")
+                        if target_path.is_file():
+                            target_path.unlink()
+                        else:
+                            shutil.rmtree(target_path)
+
+                    shutil.move(str(item), str(bundle_dir))
+                    moved_count += 1
+                    logger.info(f"已移动: {item.name} -> {bundle_dir}")
+                except Exception as e:
+                    logger.error(f"移动文件失败 {item.name}: {e}")
+
+        if not skip_migration:
+            logger.info(f"文件移动完成，共移动 {moved_count} 个文件到 {bundle_dir}")
+
+        # 文件移动完成后（或跳过迁移时），更新 multi_config.json 中的 bundle 配置
+        # 此时 name 和 bundle_dir 已经确定，可以直接更新配置
+        self._update_bundle_config_internal(name, bundle_dir)
+
     def _confirm_enable_multi_resource(self) -> bool:
-        """开启多资源适配前进行二次确认（qfluentwidgets Dialog 风格）。"""
+        """开启多资源适配前进行二次确认"""
         confirm_dialog = MessageBoxBase(self)
         confirm_dialog.widget.setMinimumWidth(420)
         confirm_dialog.widget.setMinimumHeight(200)
@@ -1341,7 +1917,9 @@ class SettingInterface(QWidget):
         title.setStyleSheet("font-weight: 600;")
         desc = BodyLabel(
             self.tr(
-                "This feature is experimental and generally not recommended to enable. "
+                "After enabling the multi-configuration feature, the resource "
+                "directories will be reconfigured. This operation is irreversible; "
+                "please proceed with caution."
             ),
             confirm_dialog,
         )
@@ -1351,8 +1929,27 @@ class SettingInterface(QWidget):
         confirm_dialog.viewLayout.addSpacing(6)
         confirm_dialog.viewLayout.addWidget(desc)
 
-        confirm_dialog.yesButton.setText(self.tr("Enable"))
+        wait_seconds = 5
+        base_yes_text = self.tr("Enable")
+        confirm_dialog.yesButton.setText(f"{base_yes_text} ({wait_seconds}s)")
         confirm_dialog.cancelButton.setText(self.tr("Cancel"))
+
+        # 在 5 秒倒计时结束前禁用确认按钮，防止误触
+        confirm_dialog.yesButton.setEnabled(False)
+
+        def _unlock_yes_button(remaining: int):
+            # 对话框已关闭则不再更新
+            if not confirm_dialog.isVisible():
+                return
+
+            if remaining > 0:
+                confirm_dialog.yesButton.setText(f"{base_yes_text} ({remaining}s)")
+                QTimer.singleShot(1000, lambda: _unlock_yes_button(remaining - 1))
+            else:
+                confirm_dialog.yesButton.setText(base_yes_text)
+                confirm_dialog.yesButton.setEnabled(True)
+
+        QTimer.singleShot(0, lambda: _unlock_yes_button(wait_seconds - 1))
 
         return confirm_dialog.exec() == QDialog.DialogCode.Accepted
 
@@ -1406,6 +2003,15 @@ class SettingInterface(QWidget):
                 self._suppress_multi_resource_signal = False
                 cfg.set(cfg.multi_resource_adaptation, False)
                 return
+            # 二次确认通过后，执行多资源适配启用后的后续操作
+            self.run_multi_resource_post_enable_tasks()
+            # 通知主界面等组件：多资源适配已启用，可初始化相关界面
+            try:
+                signalBus.multi_resource_adaptation_enabled.emit()
+            except Exception as exc:
+                logger.warning(
+                    f"发射 multi_resource_adaptation_enabled 信号失败: {exc}"
+                )
 
         cfg.set(cfg.multi_resource_adaptation, bool(checked))
 
@@ -1482,19 +2088,10 @@ class SettingInterface(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._update_notice_card_status("QYWX")
 
-    def _on_send_setting_clicked(self):
-        """处理发送设置卡片点击事件"""
+    def _on_notice_timing_clicked(self):
+        """处理通知时机设置卡片点击事件"""
         parent = self.window() or self
-        dialog = SendSettingCard(parent)
-        # 连接确认按钮的点击事件以保存设置
-        original_accept = dialog.accept
-
-        def save_and_accept():
-            dialog.save_setting()
-            original_accept()
-
-        dialog.yesButton.clicked.disconnect()
-        dialog.yesButton.clicked.connect(save_and_accept)
+        dialog = NoticeTimingDialog(parent)
         dialog.exec()
 
     def __showRestartTooltip(self):
@@ -1531,11 +2128,13 @@ class SettingInterface(QWidget):
             return
 
         # 创建更新器
+        interface = self._service_coordinator.task.interface or {}
         self._updater = Update(
             service_coordinator=self._service_coordinator,
             stop_signal=signalBus.update_stopped,
             progress_signal=signalBus.update_progress,
             info_bar_signal=signalBus.info_bar_requested,
+            interface=interface,
         )
 
         # 绑定信号
@@ -1553,11 +2152,20 @@ class SettingInterface(QWidget):
         if skip_checker:
             logger.info("跳过更新检查器启动：%s", reason)
             return
-
-        self._update_checker = UpdateCheckTask(
-            service_coordinator=self._service_coordinator
+        # 使用 Update 本身的仅检查模式进行后台检查，不触发下载与热更新流程
+        interface = self._service_coordinator.task.interface or {}
+        self._update_checker = Update(
+            service_coordinator=self._service_coordinator,
+            stop_signal=signalBus.update_stopped,
+            progress_signal=signalBus.update_progress,
+            info_bar_signal=signalBus.info_bar_requested,
+            interface=interface,
+            force_full_download=False,
+            check_only=True,
         )
-        self._update_checker.result_ready.connect(self._on_update_check_result)
+        # 仅检查模式下，Update 不会发出 InfoBar / 进度相关信号，只通过 check_result_ready 返回结果
+        self._update_checker.check_result_ready.connect(self._on_update_check_result)
+        self._update_checker.finished.connect(self._update_checker.deleteLater)
         self._update_checker.start()
 
     def _should_skip_update_checker(self) -> tuple[bool, str]:
@@ -1607,17 +2215,100 @@ class SettingInterface(QWidget):
     def _refresh_local_update_package(
         self, restart_required: bool = True
     ) -> Path | None:
-        """刷新本地更新包缓存，便于动态响应。"""
-        self._local_update_package = self._detect_local_update_package()
-        self._local_update_metadata = (
-            self._load_local_update_metadata() if self._local_update_package else None
-        )
-        if self._local_update_package:
-            hotfix_mode = self._is_local_update_hotfix()
-            self._prepare_instant_update_state(
-                restart_required=restart_required and not hotfix_mode
+        """刷新本地更新包缓存，基于本地元数据决定是否提示更新。
+
+        逻辑调整：
+        - 仅依赖 update/new_version/update_metadata.json 判断是否存在可用更新
+        - 不再区分热更新 / 全量更新，本地包一律视为需重启安装
+        - 如果元数据中声明的包文件不存在，则删除元数据
+        - 如果 attempts > 3，则通过 InfoBar 提示并删除更新包与元数据
+        """
+        target_dir = Path.cwd() / "update" / "new_version"
+        metadata_path = target_dir / "update_metadata.json"
+
+        # 默认清空缓存
+        self._local_update_package = None
+        self._local_update_metadata = None
+
+        if not metadata_path.exists():
+            logger.info("本地更新元数据不存在，跳过本地包刷新")
+            return None
+
+        metadata = self._load_local_update_metadata()
+        if not metadata:
+            # 元数据损坏或加载失败，尝试清理
+            try:
+                metadata_path.unlink()
+                logger.info("已删除损坏的本地更新元数据: %s", metadata_path)
+            except Exception as exc:
+                logger.warning("删除损坏的本地更新元数据失败: %s", exc)
+            return None
+
+        attempts = int(metadata.get("attempts", 0) or 0)
+        package_name = metadata.get("package_name") or "update.zip"
+        package_path = target_dir / package_name
+
+        # 如果尝试次数过多，提示并清理
+        if attempts > 3:
+            logger.warning(
+                "本地更新尝试次数超过限制(%s)，清理更新包与元数据: %s",
+                attempts,
+                package_path,
             )
-            logger.info("本地包模式=%s", "hotfix" if hotfix_mode else "full")
+            try:
+                from app.common.signal_bus import signalBus
+
+                signalBus.info_bar_requested.emit(
+                    "warning",
+                    self.tr(
+                        "Update failed too many times, local update package has been cleared."
+                    ),
+                )
+            except Exception as exc:  # 信号发送失败不应中断清理
+                logger.warning("发送 InfoBar 提示失败: %s", exc)
+
+            # 删除更新包与元数据
+            try:
+                if package_path.exists():
+                    package_path.unlink()
+                    logger.info("已删除本地更新包: %s", package_path)
+            except Exception as exc:
+                logger.warning("删除本地更新包失败: %s", exc)
+
+            try:
+                if metadata_path.exists():
+                    metadata_path.unlink()
+                    logger.info("已删除本地更新元数据: %s", metadata_path)
+            except Exception as exc:
+                logger.warning("删除本地更新元数据失败: %s", exc)
+
+            return None
+
+        # 检查元数据中声明的更新包是否存在
+        if not package_path.exists():
+            logger.warning(
+                "本地更新元数据存在但文件缺失，删除元数据: %s（期望文件: %s）",
+                metadata_path,
+                package_path,
+            )
+            try:
+                metadata_path.unlink()
+                logger.info("已删除失效的本地更新元数据: %s", metadata_path)
+            except Exception as exc:
+                logger.warning("删除失效的本地更新元数据失败: %s", exc)
+            return None
+
+        # 元数据与更新包均有效，准备立即更新状态（统一视为需重启安装）
+        self._local_update_package = package_path
+        self._local_update_metadata = metadata
+        self._prepare_instant_update_state(restart_required=True)
+        logger.info(
+            "检测到本地更新包（基于元数据）: %s, attempts=%s, mode=%s, source=%s",
+            package_path,
+            attempts,
+            metadata.get("mode"),
+            metadata.get("source"),
+        )
         return self._local_update_package
 
     def _prepare_instant_update_state(self, restart_required: bool = True) -> None:
@@ -1626,7 +2317,8 @@ class SettingInterface(QWidget):
         self._bind_instant_update_button(enable=True)
         latest_version = cfg.get(cfg.latest_update_version)
         if latest_version:
-            self._set_last_version_label(str(latest_version))
+            # 刷新头部版本展示行
+            self._refresh_update_header()
 
     def _is_local_update_hotfix(self) -> bool:
         return bool(
@@ -1663,6 +2355,14 @@ class SettingInterface(QWidget):
             logger.info("自动更新已在进行，跳过重复启动")
             return True
 
+        # 如果已经有本地更新包（初始化时已检测），且已经准备好立即更新状态，则不再重复处理
+        if (
+            self._local_update_package
+            and self._update_button_handler == self._on_instant_update_clicked
+        ):
+            logger.info("本地更新包已在初始化时处理，跳过重复处理")
+            return True
+
         if self._refresh_local_update_package(restart_required=True):
             if self._is_local_update_hotfix():
                 logger.info(
@@ -1692,7 +2392,7 @@ class SettingInterface(QWidget):
         )
         if latest_version:
             # 无论是否发现新版本，都同步显示最新的版本号
-            self._set_last_version_label(str(latest_version))
+            self._refresh_update_header()
 
         if not result.get("enable"):
             return
@@ -1711,7 +2411,9 @@ class SettingInterface(QWidget):
         """保存更新日志到文件"""
         import os
 
-        release_notes_dir = "./release_notes"
+        # 获取项目名称，用于创建对应的文件夹
+        project_name = self._get_project_name()
+        release_notes_dir = f"./release_notes/{project_name}"
         os.makedirs(release_notes_dir, exist_ok=True)
 
         # 清理版本号中的非法字符作为文件名
@@ -1725,11 +2427,11 @@ class SettingInterface(QWidget):
         except Exception as e:
             logger.error(f"保存更新日志失败: {e}")
 
-    def _load_release_notes(self) -> dict:
+    def _load_release_notes(self, name: str) -> dict:
         """加载所有已保存的更新日志"""
         import os
 
-        release_notes_dir = "./release_notes"
+        release_notes_dir = f"./release_notes/{name}"
         notes = {}
 
         if not os.path.exists(release_notes_dir):
@@ -1782,9 +2484,8 @@ class SettingInterface(QWidget):
             return
         self._restart_update_required = False
         self._bind_start_button(enable=False)
-        # 同步最新版本显示（即便无更新也刷新）
-        latest_version = cfg.get(cfg.latest_update_version)
-        self._set_last_version_label(str(latest_version) if latest_version else None)
+        # 同步当前/最新版本显示（即便无更新也刷新）
+        self._refresh_update_header()
 
     def _on_instant_update_clicked(self):
         """立即更新"""
@@ -1811,11 +2512,13 @@ class SettingInterface(QWidget):
         logger.info("触发资源重置，强制全量下载最新资源包（跳过 update_flag/hotfix）")
 
         # 创建强制全量下载的更新器实例
+        interface = self._service_coordinator.task.interface or {}
         self._updater = Update(
             service_coordinator=self._service_coordinator,
             stop_signal=signalBus.update_stopped,
             progress_signal=signalBus.update_progress,
             info_bar_signal=signalBus.info_bar_requested,
+            interface=interface,
             force_full_download=True,
         )
         self._updater.start()
@@ -1835,6 +2538,8 @@ class SettingInterface(QWidget):
         if not confirmed:
             if notify_if_cancel:
                 signalBus.update_stopped.emit(3)
+            # 用户取消更新，通知 main_window 检查是否需要自动运行
+            signalBus.check_auto_run_after_update_cancel.emit()
             return
 
         if self._updater_started:
@@ -1867,18 +2572,46 @@ class SettingInterface(QWidget):
             if notify_if_cancel:
                 signalBus.update_stopped.emit(3)
             return
-
         from PySide6.QtWidgets import QApplication
 
-        QApplication.quit()
+        app = QApplication.instance()
+        if app is not None:
+            QTimer.singleShot(0, app.quit)
 
     def trigger_instant_update_prompt(self, auto_accept: bool = False) -> None:
         """供外部（如自动更新流程）触发的立即更新确认。"""
         self._restart_update_required = True
-        self._refresh_local_update_package()
-        self._prepare_instant_update_state()
+        # 确保刷新本地更新包，传入 restart_required 参数
+        package = self._refresh_local_update_package(restart_required=True)
+        # 如果检测不到更新包，尝试延迟一下再检测（可能是文件系统延迟）
+        if not package:
+            logger.warning("首次检测未发现本地更新包，延迟100ms后重试")
+            QTimer.singleShot(
+                100, lambda: self._retry_trigger_instant_update(auto_accept)
+            )
+            return
+        self._prepare_instant_update_state(restart_required=True)
         logger.info(
             "触发立即更新确认，auto_accept=%s，检测到本地包=%s",
+            auto_accept,
+            bool(self._local_update_package),
+        )
+        self._handle_instant_update(auto_accept=auto_accept, notify_if_cancel=True)
+
+    def _retry_trigger_instant_update(self, auto_accept: bool) -> None:
+        """重试触发立即更新确认（用于处理文件系统延迟）。"""
+        self._restart_update_required = True
+        package = self._refresh_local_update_package(restart_required=True)
+        if not package:
+            logger.error("重试后仍未检测到本地更新包，无法触发立即更新确认")
+            signalBus.info_bar_requested.emit(
+                "error", self.tr("Update package not found, please try updating again.")
+            )
+            signalBus.update_stopped.emit(3)
+            return
+        self._prepare_instant_update_state(restart_required=True)
+        logger.info(
+            "重试后触发立即更新确认，auto_accept=%s，检测到本地包=%s",
             auto_accept,
             bool(self._local_update_package),
         )
@@ -1939,62 +2672,28 @@ class SettingInterface(QWidget):
         template: str,
         yes_button,
     ) -> None:
-        """通用的自动确认倒计时。"""
-        logger.info("立即更新倒计时开始: %ss", seconds)
-
-        def tick(remaining: int):
-            if not dialog.isVisible():
-                logger.debug("立即更新倒计时终止：对话框已关闭")
-                return
-            label.setText(template.replace("%1", str(remaining)))
-            if yes_button:
-                yes_button.setText(
-                    self.tr("Update now") + f" ({remaining}s)"
-                    if remaining >= 0
-                    else self.tr("Update now")
-                )
-            if remaining <= 0:
-                logger.info("立即更新倒计时结束，自动确认")
-                if yes_button:
-                    yes_button.setText(self.tr("Update now"))
-                dialog.accept()
-                return
-            QTimer.singleShot(1000, lambda: tick(remaining - 1))
-
-        QTimer.singleShot(0, lambda: tick(seconds))
+        """通用的自动确认倒计时，委托给模块级工具函数实现。"""
+        start_auto_confirm_countdown(
+            dialog,
+            label,
+            seconds,
+            yes_button,
+            template,
+            logger_prefix="立即更新",
+        )
 
     def _rename_updater(self, old_name, new_name):
-        """重命名更新程序。"""
-        import os
-
-        if os.path.exists(old_name) and os.path.exists(new_name):
-            os.remove(new_name)
-        if os.path.exists(old_name):
-            os.rename(old_name, new_name)
+        """重命名更新程序，复用模块级工具函数。"""
+        rename_updater_binary(str(old_name), str(new_name))
 
     def _start_updater(self):
-        """启动更新程序。"""
-        import sys
-        import subprocess
-
+        """启动更新程序（允许更新器自行显示界面）。"""
         try:
-            if sys.platform.startswith("win32"):
-                from subprocess import CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS
-
-                subprocess.Popen(
-                    ["./MFWUpdater1.exe", "-update"],
-                    creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
-                )
-            elif sys.platform.startswith("darwin") or sys.platform.startswith("linux"):
-                subprocess.Popen(["./MFWUpdater1", "-update"], start_new_session=True)
-            else:
-                raise NotImplementedError("Unsupported platform")
+            launch_updater_process()
         except Exception as e:
             logger.error(f"启动更新程序失败: {e}")
-            signalBus.info_bar_requested.emit("error", e)
+            signalBus.info_bar_requested.emit("error", str(e))
             return
-
-        logger.info("正在启动更新程序")
 
     def _on_download_progress(self, downloaded: int, total: int):
         """下载进度回调"""

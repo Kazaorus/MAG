@@ -19,16 +19,18 @@ class OptionService:
         self.current_task_id = task_id
         task = self.task_service.get_task(task_id)
         if task:
-            # 确保速通配置存在并与 interface 对齐
+            # 确保速通配置存在并与 interface 对齐（基础任务不需要 speedrun_config）
             try:
                 self.task_service.ensure_speedrun_config_for_task(task, persist=True)
             except Exception:
                 pass
             self.current_options = task.task_option
-            from app.common.constants import PRE_CONFIGURATION, POST_ACTION
+            from app.common.constants import _RESOURCE_, _CONTROLLER_, POST_ACTION
 
-            if task.item_id == PRE_CONFIGURATION:
+            if task.item_id == _RESOURCE_:
                 self.form_structure = {"type": "resource"}
+            elif task.item_id == _CONTROLLER_:
+                self.form_structure = {"type": "controller"}
             elif task.item_id == POST_ACTION:
                 self.form_structure = {"type": "post_action"}
             else:
@@ -57,7 +59,19 @@ class OptionService:
 
         # 更新任务中的选项并持久化
         task.task_option.update(option_data)
-        return self.task_service.update_task(task)
+        
+        # 基础任务不应该包含 speedrun_config
+        from app.common.constants import _RESOURCE_, _CONTROLLER_, POST_ACTION
+        if task.is_base_task() and "_speedrun_config" in task.task_option:
+            del task.task_option["_speedrun_config"]
+        
+        success = self.task_service.update_task(task)
+
+        # 发出选项更新信号，通知UI层更新显示
+        if success:
+            self.signal_bus.option_updated.emit(option_data)
+
+        return success
 
     def get_options(self) -> Dict[str, Any]:
         """获取当前任务的选项"""
@@ -91,7 +105,9 @@ class OptionService:
             return field_value if isinstance(field_value, dict) else None
         return None
 
-    def _copy_icon_from_source(self, target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    def _copy_icon_from_source(
+        self, target: Dict[str, Any], source: Dict[str, Any]
+    ) -> None:
         """将 source 中的 icon 字段复制到 target"""
         icon = source.get("icon")
         if icon:

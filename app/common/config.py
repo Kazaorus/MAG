@@ -41,6 +41,24 @@ from qfluentwidgets import (
     ConfigSerializer,
 )
 
+from app.common.__version__ import __version__
+
+
+def _detect_auto_update_default() -> bool:
+    """
+    根据版本号决定自动更新默认值：
+    - 若版本包含 ci/alpha/beta（不区分大小写），则默认关闭自动更新
+    - 否则默认开启
+    """
+    version = (__version__ or "").lower()
+    for keyword in ("ci", "alpha", "beta"):
+        if keyword in version:
+            return False
+    return True
+
+
+_AUTO_UPDATE_DEFAULT = _detect_auto_update_default()
+
 
 class Language(Enum):
     """Language enumeration mapped to QLocale."""
@@ -117,7 +135,12 @@ class Config(QConfig):
 
     announcement = ConfigItem("General", "announcement", "")
 
-    auto_update = ConfigItem("Update", "auto_update", True, BoolValidator())
+    auto_update = ConfigItem(
+        "Update", "auto_update", _AUTO_UPDATE_DEFAULT, BoolValidator()
+    )
+    bundle_auto_update = ConfigItem(
+        "Bundle", "bundle_auto_update", False, BoolValidator()
+    )
     force_github = ConfigItem("Update", "force_github", False, BoolValidator())
     github_api_key = ConfigItem("Update", "github_api_key", "")
 
@@ -129,24 +152,9 @@ class Config(QConfig):
     )
 
     # ===== 任务设置 =====
-    task_timeout_enable = ConfigItem("Task", "task_timeout_enable", True)  # 是否开启任务超时设置
-    task_timeout = ConfigItem("Task", "task_timeout", 600)  # 默认600秒
-
-    # 任务超时后动作
-    class TaskTimeoutAction(Enum):
-        """Task timeout action options."""
-
-        NOTIFY_ONLY = 0  # 仅通知
-        RESTART_AND_NOTIFY = 1  # 重启并通知
-
-    _task_timeout_action_validator = OptionsValidator([item.value for item in TaskTimeoutAction])
-    
-    task_timeout_action = OptionsConfigItem(
-        "Task",
-        "task_timeout_action",
-        TaskTimeoutAction.NOTIFY_ONLY.value,
-        _task_timeout_action_validator,
-    )
+    low_power_monitoring_mode = ConfigItem(
+        "Task", "low_power_monitoring_mode", True, BoolValidator()
+    )  # 低功耗监控模式：使用缓存的图像而不是专用监控线程
 
     # ===== 通知 =====
     Notice_DingTalk_status = ConfigItem("Notice", "DingTalk_status", False)
@@ -179,11 +187,19 @@ class Config(QConfig):
     Notice_QYWX_key = ConfigItem("Notice", "QYWX_key", "")
 
     when_start_up = ConfigItem("Notice", "when_start_up", False)
-    when_connect_failed = ConfigItem("Notice", "when_connect_failed", False)
-    when_connect_success = ConfigItem("Notice", "when_connect_success", False)
-    when_post_task = ConfigItem("Notice", "when_post_task", False)
-    when_task_failed = ConfigItem("Notice", "when_task_failed", True)
-    when_task_finished = ConfigItem("Notice", "when_task_finished", True)
+    # 通知时机配置，分别控制不同场景下的通知发送
+    when_flow_started = ConfigItem("Notice", "when_flow_started", False)  # 任务流启动时
+    when_connect_success = ConfigItem(
+        "Notice", "when_connect_success", False
+    )  # 连接成功时
+    when_connect_failed = ConfigItem(
+        "Notice", "when_connect_failed", True
+    )  # 连接失败时
+    when_task_success = ConfigItem("Notice", "when_task_success", False)  # 任务成功时
+    when_task_failed = ConfigItem("Notice", "when_task_failed", True)  # 任务失败时
+    when_post_task = ConfigItem("Notice", "when_post_task", True)  # 任务流完成时
+    when_task_timeout = ConfigItem("Notice", "when_task_timeout", True)  # 任务超时
+    when_task_finished = ConfigItem("Notice", "when_task_finished", False)  # 保留兼容性
 
     # ===== 主窗口 =====
     micaEnabled = ConfigItem("MainWindow", "MicaEnabled", isWin11(), BoolValidator())
@@ -214,8 +230,8 @@ class Config(QConfig):
     )
     last_window_geometry = ConfigItem("MainWindow", "LastWindowGeometry", "")
 
-    start_task_shortcut = ConfigItem("Shortcuts", "start_task_shortcut", "Ctrl+`")
-    stop_task_shortcut = ConfigItem("Shortcuts", "stop_task_shortcut", "Alt+`")
+    start_task_shortcut = ConfigItem("Shortcuts", "start_task_shortcut", "Ctrl+F1")
+    stop_task_shortcut = ConfigItem("Shortcuts", "stop_task_shortcut", "Alt+F1")
 
     show_advanced_startup_options = ConfigItem(
         "Personalization",
@@ -230,7 +246,7 @@ class Config(QConfig):
         "Personalization", "background_image_path", _default_background
     )
     background_image_opacity = RangeConfigItem(
-        "Personalization", "background_image_opacity", 80, RangeValidator(0, 100)
+        "Personalization", "background_image_opacity", 10, RangeValidator(0, 100)
     )
 
     # ===== 材质 & 通用界面 =====

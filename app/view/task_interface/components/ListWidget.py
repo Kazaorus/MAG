@@ -15,6 +15,7 @@ from app.core.Item import TaskItem, ConfigItem
 from app.view.task_interface.components.ListItem import TaskListItem, ConfigListItem, SpecialTaskListItem
 from app.utils.logger import logger
 from app.common.signal_bus import signalBus
+from app.common.constants import _RESOURCE_, _CONTROLLER_
 
 
 class BaseListWidget(ListWidget):
@@ -140,6 +141,8 @@ class TaskDragListWidget(BaseListWidget):
         self._pending_tasks: list[TaskItem] = []
         self._render_index: int = 0
         self._loading_tasks: bool = False
+        # 维护待处理的任务状态（当 widget 还未创建时）
+        self._pending_task_statuses: dict[str, str] = {}
 
         self._init_loading_overlay()
 
@@ -147,14 +150,29 @@ class TaskDragListWidget(BaseListWidget):
         self.service_coordinator.signal_bus.config_changed.connect(
             self._on_config_changed
         )
+        # 监听资源变化信号，更新任务列表
+        self.service_coordinator.signal_bus.option_updated.connect(
+            self._on_resource_changed
+        )
         service_coordinator.fs_signal_bus.fs_task_modified.connect(self.modify_task)
         service_coordinator.fs_signal_bus.fs_task_removed.connect(self.remove_task)
-        self.update_list()
-
+        
+        # 监听任务状态变化信号
+        from app.common.signal_bus import signalBus
+        signalBus.task_status_changed.connect(self._on_task_status_changed)
+        
         self._bulk_toggle_queue: list[tuple[TaskListItem, bool]] = []
         self._bulk_toggle_timer = QTimer(self)
         self._bulk_toggle_timer.setSingleShot(True)
         self._bulk_toggle_timer.timeout.connect(self._process_bulk_toggle_step)
+        
+        # 拖拽时自动滚动相关
+        self._drag_scroll_timer = QTimer(self)
+        self._drag_scroll_timer.timeout.connect(self._on_drag_scroll_timer)
+        self._drag_scroll_direction = 0  # -1: 向上, 1: 向下, 0: 不滚动
+        self._is_dragging = False
+        
+        self.update_list()
 
     def _on_item_selected_to_service(self, item_id: str):
         self.service_coordinator.select_task(item_id)
@@ -162,12 +180,147 @@ class TaskDragListWidget(BaseListWidget):
     def _should_include(self, task: TaskItem) -> bool:
         """根据过滤模式判断任务是否应显示在当前列表。"""
         if self._filter_mode == "special":
-            return task.is_special
-        if self._filter_mode == "normal":
-            return not task.is_special
+            if not task.is_special:
+                return False
+        elif self._filter_mode == "normal":
+            if task.is_special:
+                return False
+        
+        # 根据资源过滤任务
+        should_show = self._should_show_by_resource(task)
+        
+        # 更新任务的 is_hidden 状态（仅标记，不改变选中状态）
+        task.is_hidden = not should_show
+        
+        if not should_show:
+            return False
+        
         return True
+    
+    def _should_show_by_resource(self, task: TaskItem) -> bool:
+        """根据当前选择的资源判断任务是否应该显示"""
+        # 基础任务（资源、控制器、完成后操作）始终显示
+        if task.is_base_task():
+            return True
+        
+        # 获取当前配置中的资源
+        try:
+            # 从 Resource 任务中获取资源
+            resource_task = self.service_coordinator.task.get_task(_RESOURCE_)
+            if not resource_task:
+                logger.debug(f"[_should_show_by_resource] 任务 {task.name}: 没有 Resource 任务，显示所有任务")
+                return True  # 如果没有 Resource 任务，显示所有任务
+            
+            current_resource_name = ""
+            if isinstance(resource_task.task_option, dict):
+                current_resource_name = resource_task.task_option.get("resource", "")
+            
+            if not current_resource_name:
+                logger.debug(f"[_should_show_by_resource] 任务 {task.name}: 没有选择资源，显示所有任务")
+                return True  # 如果没有选择资源，显示所有任务
+            
+            # 获取 interface 中的任务定义
+            interface = getattr(self.service_coordinator.task, "interface", {})
+            if not interface:
+                logger.debug(f"[_should_show_by_resource] 任务 {task.name}: 没有 interface，显示所有任务")
+                return True
+            
+            # 查找任务定义中的 resource 字段
+            for task_def in interface.get("task", []):
+                if task_def.get("name") == task.name:
+                    task_resources = task_def.get("resource", [])
+                    # 如果任务没有 resource 字段，或者 resource 为空列表，表示所有资源都可用
+                    if not task_resources:
+                        logger.debug(f"[_should_show_by_resource] 任务 {task.name}: 没有 resource 字段，显示（所有资源可用）")
+                        return True
+                    # 如果任务的 resource 列表包含当前资源（使用 name 匹配），则显示
+                    if current_resource_name in task_resources:
+                        logger.debug(f"[_should_show_by_resource] 任务 {task.name}: 当前资源 {current_resource_name} 在任务的 resource 列表中，显示")
+                        return True
+                    logger.debug(f"[_should_show_by_resource] 任务 {task.name}: 当前资源 {current_resource_name} 不在任务的 resource 列表 {task_resources} 中，隐藏")
+                    return False
+            
+            # 如果找不到任务定义，默认显示
+            logger.debug(f"[_should_show_by_resource] 任务 {task.name}: 找不到任务定义，默认显示")
+            return True
+        except Exception as e:
+            # 发生错误时，默认显示所有任务
+            logger.warning(f"[_should_show_by_resource] 任务 {task.name}: 发生错误，默认显示: {e}")
+            return True
 
+    def dragMoveEvent(self, event):
+        """拖拽移动事件：检测鼠标位置并触发自动滚动，同时允许滚轮滚动"""
+        self._is_dragging = True
+        super().dragMoveEvent(event)
+        
+        # 检测鼠标位置，如果接近列表边缘则自动滚动
+        pos = event.pos()
+        viewport_height = self.viewport().height()
+        scroll_margin = 40  # 距离边缘多少像素时开始自动滚动
+        
+        # 计算滚动方向
+        scroll_direction = 0
+        if pos.y() < scroll_margin:
+            # 接近顶部，向上滚动
+            scroll_direction = -1
+        elif pos.y() > viewport_height - scroll_margin:
+            # 接近底部，向下滚动
+            scroll_direction = 1
+        
+        # 更新滚动方向并启动/停止定时器
+        self._drag_scroll_direction = scroll_direction
+        if scroll_direction != 0:
+            if not self._drag_scroll_timer.isActive():
+                self._drag_scroll_timer.start(16)  # 约60fps
+        else:
+            self._drag_scroll_timer.stop()
+    
+    def _on_drag_scroll_timer(self):
+        """拖拽自动滚动定时器回调"""
+        if self._drag_scroll_direction == 0:
+            self._drag_scroll_timer.stop()
+            return
+        
+        scroll_bar = self.verticalScrollBar()
+        if not scroll_bar:
+            return
+        
+        # 计算滚动步长（根据方向）
+        scroll_step = 8 * self._drag_scroll_direction
+        new_value = scroll_bar.value() - scroll_step
+        
+        # 限制在有效范围内
+        new_value = max(scroll_bar.minimum(), min(scroll_bar.maximum(), new_value))
+        scroll_bar.setValue(new_value)
+    
+    def wheelEvent(self, event):
+        """重写滚轮事件，确保在拖拽期间也能使用滚轮滚动"""
+        # 即使在拖拽期间也允许滚轮滚动
+        delta = event.pixelDelta().y()
+        if delta == 0:
+            delta = event.angleDelta().y()
+        if delta != 0 and self.verticalScrollBar():
+            step = int(delta * self._WHEEL_SCROLL_FACTOR)
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - step
+            )
+            event.accept()
+            return
+        super().wheelEvent(event)
+    
+    def dragLeaveEvent(self, event):
+        """拖拽离开事件：停止自动滚动"""
+        self._drag_scroll_timer.stop()
+        self._drag_scroll_direction = 0
+        self._is_dragging = False
+        super().dragLeaveEvent(event)
+    
     def dropEvent(self, event):
+        # 停止自动滚动
+        self._drag_scroll_timer.stop()
+        self._drag_scroll_direction = 0
+        self._is_dragging = False
+        
         # 拖动前收集任务和保护位置
         previous_tasks = self._collect_task_items()
         protected = self._protected_positions(previous_tasks)
@@ -200,6 +353,29 @@ class TaskDragListWidget(BaseListWidget):
         self._pending_refresh = True
         self._show_loading_overlay()
         self._fade_out.start()
+        # 普通任务列表：延迟10ms后清除任务选择
+        # 特殊任务列表：保持原样，不做任何修改
+        if self._filter_mode != "special":
+            QTimer.singleShot(10, self.clearSelection)
+    
+    def _on_resource_changed(self, options: dict) -> None:
+        """当选项变化时，更新任务列表显示"""
+        # 检查是否是资源变化（通过检查 options 中是否有 resource 字段）
+        if "resource" in options:
+            # 资源变化时，刷新任务列表
+            self.update_list()
+        else:
+            # 其他选项变化时，更新所有 TaskListItem 的选项显示
+            # 使用 QTimer.singleShot 确保 task 更新完成后再更新显示
+            QTimer.singleShot(10, self._update_all_task_option_displays)
+    
+    def _update_all_task_option_displays(self):
+        """更新所有 TaskListItem 的选项显示"""
+        for i in range(self.count()):
+            item = self.item(i)
+            widget = self.itemWidget(item)
+            if isinstance(widget, TaskListItem):
+                widget._update_option_display()
 
     def _on_fade_out_finished(self) -> None:
         if not self._pending_refresh:
@@ -221,6 +397,7 @@ class TaskDragListWidget(BaseListWidget):
         self.setCurrentRow(-1)
         self._task_widgets.clear()
         self._skeleton_items.clear()
+        # 不清除待处理状态，因为任务列表刷新后这些状态仍然有效
         all_tasks = self.service_coordinator.task.get_tasks()
         task_list = [t for t in all_tasks if self._should_include(t)]
         if self._filter_mode == "special":
@@ -299,20 +476,42 @@ class TaskDragListWidget(BaseListWidget):
         list_item.setFlags(flags)
         self.setItemWidget(list_item, task_widget)
         self._task_widgets[task.item_id] = task_widget
+        
+        # 检查是否有待处理的状态，如果有则立即应用
+        if task.item_id in self._pending_task_statuses:
+            pending_status = self._pending_task_statuses.pop(task.item_id)
+            task_widget.update_status(pending_status)
 
     def modify_task(self, task: TaskItem):
         """添加或更新任务项到列表（如果存在同 id 的任务则更新，否则新增）。"""
+        # 先尝试查找是否已有同 id 的项
+        existing_widget = self._task_widgets.get(task.item_id)
+        
+        # 检查任务是否符合过滤条件
         if not self._should_include(task):
+            # 如果任务不符合过滤条件，但已经存在于列表中，则移除它
+            if existing_widget:
+                for i in range(self.count()):
+                    item = self.item(i)
+                    widget = self.itemWidget(item)
+                    if widget == existing_widget:
+                        self.takeItem(i)
+                        widget.deleteLater()
+                        self._task_widgets.pop(task.item_id, None)
+                        break
             return
+        
         # 获取 interface 配置
         interface = getattr(self.service_coordinator.task, "interface", None)
-        # 先尝试查找是否已有同 id 的项，若有则进行更新
-        existing_widget = self._task_widgets.get(task.item_id)
+        # 如果已有同 id 的项，进行更新
         if existing_widget:
             existing_widget.task = task
             existing_widget.update_interface(interface)
             existing_widget.name_label.setText(existing_widget._get_display_name())
+            # 更新复选框状态，反映任务的选中状态（可能因隐藏而改变）
+            existing_widget.checkbox.blockSignals(True)
             existing_widget.checkbox.setChecked(task.is_checked)
+            existing_widget.checkbox.blockSignals(False)
             return
 
         if self._loading_tasks:
@@ -336,12 +535,44 @@ class TaskDragListWidget(BaseListWidget):
         if task.is_base_task():
             list_item.setFlags(list_item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
         
-        # 批量刷新时严格按传入顺序追加；单项新增时插入到倒数第二位
+        # 批量刷新时严格按传入顺序追加；单项新增时根据任务在完整列表中的位置插入
         if getattr(self, "_bulk_updating", False):
             self.addItem(list_item)
         else:
-            # 插入到倒数第二位,确保"完成后操作"始终在最后
-            insert_index = max(0, self.count() - 1)
+            # 获取完整任务列表，找到新任务在完整列表中的位置
+            all_tasks = self.service_coordinator.task.get_tasks()
+            task_index_in_all = -1
+            for i, t in enumerate(all_tasks):
+                if t.item_id == task.item_id:
+                    task_index_in_all = i
+                    break
+            
+            # 在 UI 列表中找到对应的插入位置
+            # 需要找到在完整列表中，位于当前任务之前且符合过滤条件的最后一个任务在 UI 中的位置
+            insert_index = self.count()  # 默认插入到最后
+            if task_index_in_all >= 0:
+                # 创建 UI 中任务 item_id 到索引的映射，提高查找效率
+                ui_task_positions = {}
+                for j in range(self.count()):
+                    item = self.item(j)
+                    widget = self.itemWidget(item)
+                    if isinstance(widget, TaskListItem):
+                        ui_task_positions[widget.task.item_id] = j
+                
+                # 从完整列表中，找到当前任务之前的所有任务
+                # 然后在 UI 列表中找到这些任务中最后一个符合过滤条件的任务位置
+                for i in range(task_index_in_all - 1, -1, -1):
+                    prev_task = all_tasks[i]
+                    # 检查这个任务是否在 UI 列表中
+                    if prev_task.item_id in ui_task_positions:
+                        # 找到了前一个任务在 UI 中的位置，插入到它后面
+                        insert_index = ui_task_positions[prev_task.item_id] + 1
+                        break
+            
+            # 如果没找到合适的位置，使用默认位置（倒数第二位，确保"完成后操作"始终在最后）
+            if insert_index >= self.count():
+                insert_index = max(0, self.count() - 1)
+            
             self.insertItem(insert_index, list_item)
         self.setItemWidget(list_item, task_widget)
         self._task_widgets[task.item_id] = task_widget
@@ -542,6 +773,45 @@ class TaskDragListWidget(BaseListWidget):
                 widget.checkbox.setChecked(target_state)
         if self._bulk_toggle_queue:
             self._bulk_toggle_timer.start(1)
+    
+    def _on_task_status_changed(self, task_id: str, status: str):
+        """处理任务状态变化
+        
+        Args:
+            task_id: 任务ID
+            status: 状态字符串，可选值:
+                "running", "completed", "failed", "restart_success",
+                "waiting", "skipped", ""(清除状态)
+        """
+        # 从任务widget映射中查找对应的widget
+        widget = self._task_widgets.get(task_id)
+        if widget and isinstance(widget, TaskListItem):
+            widget.update_status(status)
+            # 清除待处理状态
+            self._pending_task_statuses.pop(task_id, None)
+        else:
+            # 如果widget还没有创建，尝试在列表中查找
+            found = False
+            for i in range(self.count()):
+                item = self.item(i)
+                item_widget = self.itemWidget(item)
+                if isinstance(item_widget, TaskListItem) and item_widget.task.item_id == task_id:
+                    item_widget.update_status(status)
+                    # 更新映射，以便下次直接找到
+                    self._task_widgets[task_id] = item_widget
+                    # 清除待处理状态
+                    self._pending_task_statuses.pop(task_id, None)
+                    found = True
+                    break
+            
+            # 如果找不到 widget，保存状态待后续应用
+            if not found:
+                if status:
+                    self._pending_task_statuses[task_id] = status
+                else:
+                    # 如果状态为空（清除状态），从待处理列表中移除
+                    self._pending_task_statuses.pop(task_id, None)
+    
 
 
 class ConfigListWidget(BaseListWidget):
@@ -586,7 +856,7 @@ class ConfigListWidget(BaseListWidget):
     def _add_config_to_list(self, config: ConfigItem):
         """添加单个配置项到列表"""
         list_item = QListWidgetItem()
-        config_widget = ConfigListItem(config)
+        config_widget = ConfigListItem(config, self.service_coordinator)
         self.addItem(list_item)
         self.setItemWidget(list_item, config_widget)
 
@@ -605,6 +875,7 @@ class ConfigListWidget(BaseListWidget):
     def _on_config_changed(self, config_id: str):
         """服务层配置切换时同步高亮配置项。"""
         self._select_config_by_id(config_id, emit_signal=False)
+        signalBus.title_changed.emit()
 
     def add_config(self, config: ConfigItem):
         """添加配置项到列表"""
