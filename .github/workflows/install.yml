@@ -212,6 +212,12 @@ jobs:
           python ./tools/build.py ${{ matrix.platform }} ${{ matrix.arch }} ${{ needs.meta.outputs.tag }}
         shell: pwsh  
 
+      - name: Download background image
+        shell: bash
+        run: |
+          curl -L -o dist/MFW/background.png "https://ys4fun-prod-pub.oss-cn-hangzhou.aliyuncs.com/game-site/image/abc0d629-faad-493f-81d7-3df181f871d3.png"
+
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
