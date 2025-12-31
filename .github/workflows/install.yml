@@ -146,14 +146,6 @@ jobs:
         run: |
           rm install/MFW-PyQt6-${{ matrix.platform }}-${{ matrix.arch }}*
 
-      - name: replace MFW icon
-        if: matrix.platform == 'win'
-        uses: overflow65537/resource_hacker@v1
-        with:
-          exe-path: 'install/MFW.exe'
-          icon-path: 'icon.ico'
-          output-path: 'install/MFW.exe'
-          
       - name: Download background image
         shell: bash
         run: |
