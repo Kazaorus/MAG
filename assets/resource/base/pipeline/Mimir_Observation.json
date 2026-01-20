@@ -146,7 +146,7 @@
             }
         },
         "action": "Click",
-        "post_delay": 1000,
+        "post_delay": 2000,
         "next": [
             "堆栈递归",
             "直接返回主菜单"
@@ -154,17 +154,14 @@
     },
     "堆栈递归": {
         "recognition": {
-            "type": "OCR",
-            "param": {
-                "roi": [
-                    1098,
-                    569,
-                    129,
-                    106
-                ],
-                "expected": [
-                    "10"
-                ]
+            "type":"Custom",
+            "param":{
+                "custom_recognition": "ExplorationCumulativeRewardsDetermination",
+                "custom_recognition_param": {
+                    "fixed_reward_collection": false,
+                    "claimable_date": 5,
+                    "claimable_time": "05:00:00"
+                }
             }
         },
         "action": "Click",

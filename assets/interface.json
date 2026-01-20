@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",
@@ -42,7 +42,10 @@
         {
             "name": "弥弥观测站",
             "entry": "弥弥观测站",
-            "default_check": true
+            "default_check": true,
+            "option":[
+                "在周末固定领取累积奖励"
+            ]
         },
         {
             "name": "商店免费体力",
@@ -274,6 +277,81 @@
                     }
                 }
             ]
+        },
+        "在周末固定领取累积奖励":{
+            "description": "<p>未启用时：仅在堆栈递归累积到x10时才会领取奖励</p><p>启用时：在周末的指定时间后运行该任务时无论进度如何皆会领取</p>",
+            "type": "switch",
+            "cases":[
+                {
+                    "name": "No",
+                    "pipeline_override":{}
+                },
+                {
+                    "name": "Yes",
+                    "pipeline_override":{
+                        "堆栈递归": {
+                            "recognition": {
+                                "param":{
+                                    "custom_recognition_param":{
+                                        "fixed_reward_collection": true
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "option":[
+                        "领取日期",
+                        "领取时间"
+                    ]
+                }
+            ]
+        },
+        "领取日期":{
+            "description":"<p>用于选择指定的日期，可选 周六/周日</p>",
+            "cases":[
+                {
+                    "name":"周六",
+                    "pipeline_override":{}
+                },
+                {
+                    "name":"周日",
+                    "pipeline_override":{
+                        "堆栈递归": {
+                            "recognition": {
+                                "param":{
+                                    "custom_recognition_param":{
+                                        "claimable_date": 6
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        "领取时间":{
+            "type":"input",
+            "inputs":[
+                {
+                    "name":"领取时间",
+                    "description":"<p>用于输入指定的时间，格式为 hh:mm:ss。如 05:00:00 或 18:32:50</p>",
+                    "default":"05:00:00",
+                    "pipeline_type":"string",
+                    "verify":"^(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+                    "pattern_msg": "时间格式错误，应为 hh:mm:ss，如 05:00:00 或 18:32:50"
+                }
+            ],
+            "pipeline_override":{
+                "堆栈递归": {
+                    "recognition": {
+                        "param":{
+                            "custom_recognition_param":{
+                                "claimable_time": "{领取时间}"
+                            }
+                        }
+                    }
+                }
+            }
         },
         "关卡类型": {
             "label": "选择要扫荡的关卡",

@@ -43,5 +43,10 @@
         "type": "action",
         "class": "ScreenShot",
         "file_path": "{custom_path}/action/ScreenShot.py"
+    },
+    "ExplorationCumulativeRewardsDetermination": {
+        "type": "recognition",
+        "class": "ExplorationCumulativeRewardsDetermination",
+        "file_path": "{custom_path}/recognition/ExplorationCumulativeRewardsDetermination.py"
     }
 }
