@@ -1,19 +1,50 @@
-from typing import Dict, List, Optional, Tuple, Literal
+from typing import Dict, List, Optional, Tuple, Literal, Any
 from maa.context import Context
 from maa.custom_action import CustomAction
 from maa.custom_recognition import CustomRecognition
 from maa.define import OCRResult, Rect, RecognitionDetail
+from dataclasses import dataclass
 import json
 import os
 
 
 # 定义基本参数
 warehouse_roi: List[int] = [303, 138, 391, 495]
-warehouse_page_turning_path: List[List[int]] = [[473, 625, 0, 0], [473, 167, 0, 0]]
+warehouse_page_turning_path: List[List[int]] = [[473, 625, 0, 0], [473, 160, 0, 0]]
 shop_roi: List[int] = [284, 93, 958, 606]
 shop_page_turning_path: List[List[int]] = [[759, 605, 0, 0], [759, 93, 0, 0]]
 ocr_score_threshold: float = 0.8
 max_failed_num: int = 5
+
+
+@dataclass
+class ResultMatchPrecursor:
+    """封装OCR初步分类后的结果，用于进一步匹配"""
+    identifier: int | str
+    position: Rect
+
+    def corner(self, sign: int) -> Tuple[int, int]:
+        """sign为0,1,2,3时分别表示左上、右上、左下、右下角"""
+        match sign:  # 无需在意“此代码不可到达”，纯粹是因为PyCharm抽风
+            case 0: return self.position.x, self.position.y
+            case 1: return self.position.x+self.position.w, self.position.y
+            case 2: return self.position.x, self.position.y+self.position.h
+            case 3: return self.position.x+self.position.w, self.position.y+self.position.h
+            case _: raise ValueError("sign的值只能为0,1,2,3")
+
+
+def box_rectify(box: Any) -> Rect:
+    """将所有可能用于表示ROI的类型统一为Rect"""
+    if (isinstance(box, list) or isinstance(box, tuple)) and len(box) == 4:
+        return Rect(*box)
+    elif isinstance(box, Rect):
+        return box
+    else:
+        raise ValueError("仓库扫描：box_rectify需要传入长度为4的列表/元组或Rect实例")
+
+def calculate_distance(p1: Tuple[int, int], p2: Tuple[int, int]) -> int:
+    """计算两点间的曼哈顿距离"""
+    return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])
 
 
 class WarehouseScan(CustomRecognition):
@@ -64,64 +95,54 @@ class WarehouseScan(CustomRecognition):
                 context.run_task("warehouse_page_turning")
 
         context.run_task("点击下方空白")
+        context.run_task("push_message", {
+            "push_message": {
+                "focus": {
+                    "Node.Action.Starting": f"{warehouse_stock}"
+                }
+            }
+        })
         return CustomRecognition.AnalyzeResult(argv.roi, warehouse_stock)
 
-    @staticmethod
-    def match_items_and_quantities(ocr_results: List[OCRResult]) -> Dict[str, int]:
-        def calculate_distance(p1: Tuple[int, int], p2: Tuple[int, int]) -> int:
-            return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])
-
-        def get_box(result: OCRResult) -> Rect:
-            if (isinstance(result.box, list) or isinstance(result.box, tuple)) and len(result.box) == 4:
-                return Rect(*result.box)
-            elif isinstance(result.box, Rect):
-                return result.box
-            else:
-                raise ValueError("仓库扫描：get_box需要传入长度为4的列表/元组或Rect实例")
-
-        items: List[OCRResult] = []
-        quantities: List[OCRResult] = []
+    def match_items_and_quantities(self, ocr_results: List[OCRResult]) -> Dict[str, int]:
+        """匹配OCR结果中的物品名及其对应的数量"""
+        items: List[ResultMatchPrecursor] = []
+        quantities: List[ResultMatchPrecursor] = []
         matched: Dict[str, int] = {}
-        for result in ocr_results:
-            # 区分物品名和数量
+        for result in ocr_results:  # 区分物品名和数量
             try:
-                int(result.text)
-                quantities.append(result)
+                quantities.append(ResultMatchPrecursor(self.parse_number(result.text), box_rectify(result.box)))
             except ValueError:
-                items.append(result)
+                items.append(ResultMatchPrecursor(result.text, box_rectify(result.box)))
 
         for item in items:
-            item_box = get_box(item)
-            item_point = (item_box.x + item_box.w, item_box.y)  # 取roi右上角作为识别点
             min_distance = float('inf')
-            best_match_quantity: Optional[OCRResult] = None
-            if not quantities:
-                break
+            best_match_quantity: Optional[ResultMatchPrecursor] = None
+            if not quantities: break
 
             for quantity in quantities:
-                quantity_box = get_box(quantity)
-                quantity_point = (quantity_box.x, quantity_box.y + quantity_box.h)  # 取roi左下角作为识别点
-                current_distance = calculate_distance(item_point, quantity_point)
+                # 取名称右上角、数字左下角作为识别点
+                current_distance = calculate_distance(item.corner(1), quantity.corner(2))
                 if current_distance < min_distance:
                     min_distance = current_distance
                     best_match_quantity = quantity
 
             if best_match_quantity:
-                matched[item.text] = int(best_match_quantity.text)
+                matched[item.identifier] = best_match_quantity.identifier
                 quantities.remove(best_match_quantity)
 
         return matched
 
     @staticmethod
     def define_basic_tasks(context: Context):
-        # 匹配食材名称和数量
+        # 匹配食材名称和数量（汉字 | 纯数字 | 结尾带K,M,B的简写数字）
         context.override_pipeline({
             "gain_warehouse_category": {
                 "recognition": {
                     "type": "OCR",
                     "param": {
                         "roi": warehouse_roi,
-                        "expected": "^([\\u4e00-\\u9fa5]+|[1-9]\\d*)$"
+                        "expected": "^([\\u4e00-\\u9fa5]+)|((?:\\d+\\.\\d*|\\d+)[kKmMbB]?)$"
                     }
                 },
                 "on_error": ["空白任务"]
@@ -142,6 +163,15 @@ class WarehouseScan(CustomRecognition):
                 "post_delay": 500
             }
         })
+
+    @staticmethod
+    def parse_number(unparsed: str) -> int:
+        """将带有K,M,B的简写数字解析为整数"""
+        unparsed = unparsed.strip().upper()
+        suffixes = {'K': 10 ** 3, 'M': 10 ** 6, 'B': 10 ** 9}
+        if unparsed[-1] in suffixes:
+            return int(float(unparsed[:-1]) * suffixes[unparsed[-1]])
+        return int(float(unparsed))
 
 
 class ShopScan(CustomRecognition):
@@ -190,6 +220,14 @@ class ShopScan(CustomRecognition):
             else:
                 context.run_action("shop_page_turning")
 
+        context.run_task("点击下方空白")
+        context.run_task("push_message", {
+            "push_message": {
+                "focus": {
+                    "Node.Action.Starting": f"{shop_stock}"
+                }
+            }
+        })
         context.run_task("返回上级菜单")
         return CustomRecognition.AnalyzeResult(argv.roi, shop_stock)
 
@@ -204,9 +242,6 @@ class ShopScan(CustomRecognition):
 
     @staticmethod
     def filter_eligible_ingredients(recognition_results: RecognitionDetail) -> List[OCRResult]:
-        def calculate_distance(p1: Tuple[int, int], p2: Tuple[int, int]) -> int:
-            return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])
-
         category: List[OCRResult] = []
         sold_out_signs: List[OCRResult] = []
         for result in recognition_results.filtered_results:

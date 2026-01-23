@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.3.1",
+    "version": "1.3.2",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",
@@ -1764,7 +1764,7 @@
                     }
                 },
                 {
-                    "name": "购买需求食材",
+                    "name": "不购买食材",
                     "pipeline_override": {
                         "餐厅主要任务":{
                             "action": {
