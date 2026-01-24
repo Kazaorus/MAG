@@ -1,0 +1,114 @@
+{
+    "限期委培每日奖励":{
+        "next":[
+            "点击限期委培",
+            "[JumpBack]寻找限期委培",
+            "[JumpBack]进入活动界面",
+            "[JumpBack]关闭待机页面"
+        ],
+        "timeout": 5000,
+        "on_error": [
+            "直接返回主菜单"
+        ]
+    },
+    "寻找限期委培":{
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    4,
+                    2,
+                    98,
+                    79
+                ],
+                "template": "通用操作/返回.png"
+            }
+        },
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [
+                    106,
+                    640,
+                    1,
+                    1
+                ],
+                "end": [
+                    106,
+                    115,
+                    1,
+                    1
+                ],
+                "duration": 2000,
+                "end_hold": 1000
+            }
+        },
+        "max_hit": 3
+    },
+    "点击限期委培":{
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    7,
+                    65,
+                    242,
+                    613
+                ],
+                "expected": [
+                    "限期委培"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 2000,
+        "next":[
+            "领取限期委培奖励",
+            "直接返回主菜单"
+        ]
+    },
+    "领取限期委培奖励":{
+        "recognition":{
+            "type":"OCR",
+            "param":{
+                "roi":[
+                    705, 
+                    571, 
+                    110, 
+                    117
+                ],
+                "expected":[
+                    "每日任务评分"
+                ]
+            }
+        },
+        "action":"Click",
+        "post_wait_freezes":2000,
+        "next":[
+            "领取阶段奖励",
+            "[JumpBack]关闭奖励通知"
+        ]
+    },
+    "领取阶段奖励":{
+        "recognition":{
+            "type":"OCR",
+            "param":{
+                "roi":[
+                    838, 
+                    596, 
+                    129, 
+                    50
+                ],
+                "expected":[
+                    "^\\d+/\\d+$"
+                ]
+            }
+        },
+        "action":"Click",
+        "post_wait_freezes":2000,
+        "next":[
+            "直接返回主菜单",
+            "[JumpBack]关闭奖励通知"
+        ]
+    }
+}

@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.3.2",
+    "version": "1.3.3",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",
@@ -195,6 +195,23 @@
             "entry": "皮肤活动每日任务",
             "default_check": false,
             "description": "<p>对于部分有相关活动界面的皮肤，领取其中的每日奖励</p><p>速通周期:每天5点后刷新一次</p>",
+            "speedrun": {
+                "mode": "daily",
+                "trigger": {
+                    "daily": {
+                        "hour_start": 5
+                    }
+                },
+                "run": {
+                    "count": 1
+                }
+            }
+        },
+        {
+            "name": "限期委培每日奖励",
+            "entry": "限期委培每日奖励",
+            "default_check": false,
+            "description": "<p>领取限期委培中的每日任务评分奖励</p><p>速通周期:每天5点后刷新一次</p>",
             "speedrun": {
                 "mode": "daily",
                 "trigger": {

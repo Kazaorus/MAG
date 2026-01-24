@@ -95,13 +95,6 @@ class WarehouseScan(CustomRecognition):
                 context.run_task("warehouse_page_turning")
 
         context.run_task("点击下方空白")
-        context.run_task("push_message", {
-            "push_message": {
-                "focus": {
-                    "Node.Action.Starting": f"{warehouse_stock}"
-                }
-            }
-        })
         return CustomRecognition.AnalyzeResult(argv.roi, warehouse_stock)
 
     def match_items_and_quantities(self, ocr_results: List[OCRResult]) -> Dict[str, int]:
@@ -193,13 +186,12 @@ class ShopScan(CustomRecognition):
         failed_num = 0
         while True:
             is_last_page = False
-            recorded_items = shop_stock.keys()
             screenshot = context.tasker.controller.post_screencap().wait().get()
 
             # 记录食材
             unprocessed_category = context.run_recognition("gain_shop_category", screenshot)
             if unprocessed_category and unprocessed_category.filtered_results:
-                category: List[OCRResult] = self.filter_eligible_ingredients(unprocessed_category)
+                category: List[str] = self.filter_eligible_ingredients(unprocessed_category)
             else:
                 if failed_num >= max_failed_num:  # 超过最大失败次数，返回当前结果
                     context.run_task("返回上级菜单")
@@ -209,11 +201,11 @@ class ShopScan(CustomRecognition):
                     continue
 
             for ingredient in category:
-                if ingredient.text in recorded_items:
+                if ingredient in shop_stock.keys():  # 食材已记录，表明本页是最后一页
                     is_last_page = True
                     continue
-                if ingredient.text in merchandises.keys():
-                    shop_stock[ingredient.text] = merchandises[ingredient.text]
+                if ingredient in merchandises.keys():
+                    shop_stock[ingredient] = merchandises[ingredient]
 
             if is_last_page:
                 break
@@ -221,13 +213,6 @@ class ShopScan(CustomRecognition):
                 context.run_action("shop_page_turning")
 
         context.run_task("点击下方空白")
-        context.run_task("push_message", {
-            "push_message": {
-                "focus": {
-                    "Node.Action.Starting": f"{shop_stock}"
-                }
-            }
-        })
         context.run_task("返回上级菜单")
         return CustomRecognition.AnalyzeResult(argv.roi, shop_stock)
 
@@ -241,25 +226,24 @@ class ShopScan(CustomRecognition):
             return {name: int(param["shop_daily_limit"]) for name, param in json.load(merchandises_dic).items()}
 
     @staticmethod
-    def filter_eligible_ingredients(recognition_results: RecognitionDetail) -> List[OCRResult]:
-        category: List[OCRResult] = []
-        sold_out_signs: List[OCRResult] = []
+    def filter_eligible_ingredients(recognition_results: RecognitionDetail) -> List[str]:
+        category: List[ResultMatchPrecursor] = []
+        sold_out_signs: List[ResultMatchPrecursor] = []
         for result in recognition_results.filtered_results:
             if result.score > ocr_score_threshold:
-                if "限购" not in result.text and "本日售罄" not in result.text:
-                    category.append(result)
-                elif "本日售罄" in result.text:
-                    sold_out_signs.append(result)
+                if "限购" not in result.text and "本日售罄" not in result.text:  # 食材名
+                    category.append(ResultMatchPrecursor(result.text, box_rectify(result.box)))
+                elif "本日售罄" in result.text:  # 售罄标志
+                    sold_out_signs.append(ResultMatchPrecursor(result.text, box_rectify(result.box)))
 
         # 删除category中位于售罄标志下方最近的食材
         for sign in sold_out_signs:
-            sign_point = (sign.box[0], sign.box[1])  # 取左上角作为判定点
             min_distance = float("inf")
-            nearest_ingredient: Optional[OCRResult] = None
+            nearest_ingredient: Optional[ResultMatchPrecursor] = None
             for ingredient in category:
-                if ingredient.box[1] <= sign.box[1]:
+                if ingredient.position.y <= sign.position.y:
                     continue  # 食材位于售罄标志上方
-                current_distance = calculate_distance(sign_point, (ingredient.box[0], ingredient.box[1]))
+                current_distance = calculate_distance(sign.corner(0), ingredient.corner(0))  # 均取左上角作为判定点
                 if current_distance < min_distance:
                     nearest_ingredient = ingredient
                     min_distance = current_distance
@@ -267,7 +251,7 @@ class ShopScan(CustomRecognition):
             if nearest_ingredient:
                 category.remove(nearest_ingredient)
 
-        return category
+        return [filtered.identifier for filtered in category]
 
 
     @staticmethod
