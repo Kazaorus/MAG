@@ -153,7 +153,7 @@ class RestaurantMainProcess(CustomAction):
         context.run_task("push_message", {
             "push_message": {
                 "focus": {
-                    "Node.Action.Starting": f"{message}"
+                    "Node.Action.Starting": f"{str(message)}"
                 }
             }
         })

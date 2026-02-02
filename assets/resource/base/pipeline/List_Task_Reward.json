@@ -1,0 +1,108 @@
+{
+    "列表任务奖励": {
+        "timeout": 10000,
+        "next": [
+            "进入列表任务界面",
+            "[JumpBack]寻找列表任务",
+            "[JumpBack]进入活动界面",
+            "[JumpBack]关闭待机页面"
+        ],
+        "on_error": [
+            "直接返回主菜单"
+        ]
+    },
+    "领取列表任务奖励": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    1160,
+                    577,
+                    81,
+                    43
+                ],
+                "template": [
+                    "战斗任务/联防协议奖励.png"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target_offset": [
+                    -10,
+                    0,
+                    0,
+                    0
+                ]
+            }
+        },
+        "post_wait_freezes": 1000,
+        "timeout": 10000,
+        "on_error": [
+                "直接返回主菜单_2"
+            ],
+        "next": [
+            "直接返回主菜单",
+            "[JumpBack]关闭奖励通知"
+        ]
+    },
+    "进入列表任务界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    7,
+                    65,
+                    242,
+                    613
+                ],
+                "expected": [
+                    "联防"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "领取列表任务奖励"
+        ],
+        "on_error": [
+            "直接返回主菜单"
+        ]
+    },
+    "寻找列表任务": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    4,
+                    2,
+                    98,
+                    79
+                ],
+                "template": "通用操作/返回.png"
+            }
+        },
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [
+                    106,
+                    640,
+                    1,
+                    1
+                ],
+                "end": [
+                    106,
+                    115,
+                    1,
+                    1
+                ],
+                "duration": 2000,
+                "end_hold": 1000
+            }
+        },
+        "max_hit": 5
+    }
+}

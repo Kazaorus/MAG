@@ -157,7 +157,8 @@
                 ]
             }
         },
-        "action": "Click"
+        "action": "Click",
+        "post_wait_freezes": 2000
     },
     "进入餐厅委托界面": {
         "recognition": {
@@ -272,7 +273,8 @@
     "下架菜品任务": {
         "next": [
             "下架完毕",
-            "[JumpBack]下架菜品"
+            "[JumpBack]下架菜品",
+            "[JumpBack]进入今日菜单"
         ]
     },
     "下架完毕": {

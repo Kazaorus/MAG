@@ -40,15 +40,16 @@ class RestaurantOptimizer:
                  data_path: str,
                  warehouse_storage: Dict[str, int],
                  shop_storage: Dict[str, int],
-                 time_limit: float = 24,
-                 max_slots: int = 2):
+                 time_limit: float = 26
+                 ):
         """
-        :param data_path: 餐厅相关文件的存储路径
-        :param time_limit: 时间限制（小时），默认24小时
+        :param data_path: 餐厅相关文件的存储路径（绝对路径）
+        :param warehouse_storage: 仓库食材储量
+        :param shop_storage: 商店中可购买的食材
+        :param time_limit: 上架菜品预计的售卖时间（小时）。考虑浮点数计算及小数化整的误差，默认值设为26小时
         """
         self.data_path = data_path
         self.time_limit = int(time_limit * 60)  # 转换为分钟
-        self.max_slots = max_slots
         self.warehouse_storage = warehouse_storage
         self.purchasable_ingredients = shop_storage
 
@@ -129,8 +130,7 @@ class RestaurantOptimizer:
             
             # 更新剩余食材
             remaining_amount = current_amount - required_amount * count
-            if remaining_amount < 0: remaining_amount = 0
-            current_ingredients[ingredient] = remaining_amount
+            current_ingredients[ingredient] = remaining_amount if remaining_amount > 0 else 0
 
         return ratio, current_ingredients
 
@@ -215,19 +215,18 @@ class RestaurantOptimizer:
                 }
 
         # 尝试两个菜品的组合
-        if self.max_slots >= 2:
-            for dish1, dish2 in combinations(self.unlocked_dishes, 2):
-                counts, profit = self._optimize_two_dishes(dish1, dish2)
-                if profit > best_solution['profit']:
-                    best_solution = {
-                        'dishes': [dish1, dish2],
-                        'counts': counts,
-                        'profit': profit,
-                        'total_time_hours': [
-                            counts[0] * dish1.time / 60,
-                            counts[1] * dish2.time / 60
-                        ],
-                    }
+        for dish1, dish2 in combinations(self.unlocked_dishes, 2):
+            counts, profit = self._optimize_two_dishes(dish1, dish2)
+            if profit > best_solution['profit']:
+                best_solution = {
+                    'dishes': [dish1, dish2],
+                    'counts': counts,
+                    'profit': profit,
+                    'total_time_hours': [
+                        counts[0] * dish1.time / 60,
+                        counts[1] * dish2.time / 60
+                    ],
+                }
 
         # 计算食材需求和购买计划
         solutions: List[MenuSolution] = []
