@@ -176,7 +176,7 @@
         },
         {
             "name": "皮肤活动每日任务",
-            "entry": "皮肤活动每日任务",
+            "entry": "列表任务奖励",
             "default_check": false,
             "description": "<p>对于部分有相关活动界面的皮肤，领取其中的每日奖励</p><p>速通周期:每天5点后刷新一次</p>",
             "speedrun": {
@@ -188,6 +188,21 @@
                 },
                 "run": {
                     "count": 1
+                }
+            },
+            "pipeline_override": {
+                "进入列表任务界面": {
+                    "recognition": {
+                        "type": "OCR",
+                        "param": {
+                            "expected": [
+                                "咫尺身畔"
+                            ]
+                        }
+                    },
+                    "next":[
+                        "皮肤任务界面"
+                    ]
                 }
             }
         },

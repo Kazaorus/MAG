@@ -1,38 +1,35 @@
 {
-    "皮肤活动每日任务": {
-        "next": [
-            "领取皮肤活动奖励",
-            "[JumpBack]皮肤任务界面",
-            "[JumpBack]跳过剧情",
-            "[JumpBack]皮肤活动界面",
-            "[JumpBack]关闭待机页面"
-        ],
-        "post_wait_freezes": 2000
-    },
     "皮肤任务界面": {
         "recognition": {
-            "type": "TemplateMatch",
+            "type": "OCR",
             "param": {
-                "roi": [
-                    78,
-                    6,
-                    122,
-                    69
-                ],
-                "template": "通用操作/主菜单.png"
-            }
-        },
-        "action": {
-            "type": "Click",
-            "param": {
-                "target": [
-                    122,
-                    672,
-                    1,
-                    1
+                "roi": [1084, 621, 179, 76],
+                "expected": [
+                    "前往",
+                    "邀约"
                 ]
             }
-        }
+        },
+        "action": "Click",
+        "post_wait_freezes": 3000,
+        "next":[
+            "领取皮肤活动奖励",
+            "[JumpBack]皮肤活动_见闻",
+            "[JumpBack]跳过剧情"
+        ]
+    },
+    "皮肤活动_见闻":{
+        "recognition":{
+            "type":"OCR",
+            "param":{
+                "roi":[26, 641, 177, 58],
+                "expected":[
+                    "见闻"
+                ]
+            }
+        },
+        "action":"Click",
+        "post_wait_freezes":1000
     },
     "跳过剧情": {
         "recognition": {
@@ -51,31 +48,6 @@
         },
         "action": "Click"
     },
-    "皮肤活动界面": {
-        "recognition": {
-            "type": "TemplateMatch",
-            "param": {
-                "roi": [
-                    1105,
-                    47,
-                    148,
-                    81
-                ],
-                "template": "通用操作/主页标志.png"
-            }
-        },
-        "action": {
-            "type": "Click",
-            "param": {
-                "target": [
-                    130,
-                    520,
-                    1,
-                    1
-                ]
-            }
-        }
-    },
     "领取皮肤活动奖励": {
         "recognition": {
             "type": "OCR",
@@ -92,6 +64,7 @@
             }
         },
         "action": "Click",
+        "post_wait_freezes":1000,
         "next": [
             "直接返回主菜单",
             "[JumpBack]关闭奖励通知"
