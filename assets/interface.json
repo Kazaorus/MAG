@@ -102,7 +102,7 @@
             "name": "列表任务奖励",
             "entry": "列表任务奖励",
             "default_check": false,
-            "description": "<p>领取列表任务的奖励</p><p>主要包含联防协议任务列表的奖励，同时也会有部分临时任务包含其中</p><p>当前包含临时任务：</p><ul><li>荷锄归</li></ul>",
+            "description": "<p>领取列表任务的奖励</p><p>主要包含联防协议任务列表的奖励，同时也会有部分临时任务包含其中</p><p>当前包含临时任务：</p><ul><li></li></ul>",
             "option":[
                 "列表任务类型"
             ]
@@ -759,6 +759,20 @@
                                 "param": {
                                     "custom_action_param": {
                                         "aim": "无"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "天路曙开",
+                    "pipeline_override": {
+                        "选择刻印": {
+                            "action": {
+                                "param": {
+                                    "custom_action_param": {
+                                        "aim": "天路曙开"
                                     }
                                 }
                             }
@@ -1711,20 +1725,6 @@
                 {
                     "name": "联防协议",
                     "pipeline_override": {}
-                },
-                {
-                    "name": "荷锄归",
-                    "pipeline_override":{
-                        "进入列表任务界面": {
-                            "recognition": {
-                                "param":{
-                                    "expected":[
-                                        "荷锄归"
-                                    ]
-                                }
-                            }
-                        }
-                    }
                 }
             ]
         },
