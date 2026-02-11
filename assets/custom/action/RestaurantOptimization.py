@@ -1,19 +1,32 @@
-from typing import List, Dict, Tuple, Literal
+from typing import List, Dict, Tuple, Literal, FrozenSet, Set
 from itertools import combinations
 from dataclasses import dataclass
+from enum import Enum
 import os
 import json
+import math
+
+
+# ── 基本参数 ──────────────────────────────────────────────
+DEFAULT_OPERATION_TIME = 26 * 60
+
+
+class PurchaseStrategy(Enum):
+    """购买策略"""
+    BUY_ALL = "buy_all"           # 买满需求食材
+    BUY_MISSING = "buy_missing"   # 购买缺少食材
+    NO_PURCHASE = "no_purchase"   # 不购买食材
 
 
 @dataclass
 class Dish:
     """菜品类"""
     name: str
-    cookware: Literal["炒锅", "烤箱", "蒸笼", "煮锅"]  # 所属厨具
-    price: int  # 售卖价格
-    time: int  # 预计售卖时间（分钟）
-    unlock_level: int  # 解锁等级
-    ingredients: Dict[str, int]  # 消耗食材 {食材名: 数量}
+    cookware: Literal["炒锅", "烤箱", "蒸笼", "煮锅"]
+    price: int
+    time: float  # 预计售卖时间（分钟）
+    unlock_level: int
+    ingredients: Dict[str, int]
 
     @property
     def profit_rate(self) -> float:
@@ -21,235 +34,427 @@ class Dish:
         return self.price / self.time if self.time > 0 else 0
 
     def __repr__(self):
-        return f"{self.name}(收益率:{self.profit_rate:.2f})"
+        return f"{self.name}(¥{self.price}/{self.time}min, 收益率:{self.profit_rate:.2f})"
 
 
 @dataclass
 class MenuSolution:
     """单个菜品的上架方案"""
-    dish: Dish  # 上架菜品
-    count: int  # 上架数量
-    bar_ratio: float  # 需要拖动的进度条比例
+    dish: Dish
+    count: int
+    bar_ratio: float  # 三位小数
 
     def __repr__(self):
-        return f"上架 {self.dish.name} {self.count}份，比例{self.bar_ratio:.2f}"
+        return (f"上架 {self.dish.name} {self.count}份, "
+                f"进度条比例 {self.bar_ratio:.3f}, "
+                f"预计收益 {self.count * self.dish.price}, "
+                f"预计耗时 {self.count * self.dish.time / 60:.1f}h")
+
+
+@dataclass
+class OptimizationResult:
+    """完整的优化结果"""
+    solutions: List[MenuSolution]
+    purchase_plan: Dict[str, int]  # 需要在商店购买的食材及数量
+    total_profit: int
+    strategy: PurchaseStrategy
+
+    def __repr__(self):
+        lines = [f"策略: {self.strategy.value}", f"总预计收益: {self.total_profit}"]
+        for s in self.solutions:
+            lines.append(f"  {s}")
+        if self.purchase_plan:
+            lines.append("需购买食材:")
+            for name, amount in self.purchase_plan.items():
+                if amount > 0:
+                    lines.append(f"  {name}: {amount}")
+        return "\n".join(lines)
 
 
 class RestaurantOptimizer:
-    def __init__(self,
-                 data_path: str,
-                 warehouse_storage: Dict[str, int],
-                 shop_storage: Dict[str, int],
-                 time_limit: float = 26
-                 ):
+    def __init__(
+        self,
+        data_path: str,
+        warehouse_storage: Dict[str, int],
+        shop_storage: Dict[str, int],
+        time_limit: float,
+        strategy: PurchaseStrategy = PurchaseStrategy.BUY_MISSING,
+    ):
         """
         :param data_path: 餐厅相关文件的存储路径（绝对路径）
         :param warehouse_storage: 仓库食材储量
-        :param shop_storage: 商店中可购买的食材
-        :param time_limit: 上架菜品预计的售卖时间（小时）。考虑浮点数计算及小数化整的误差，默认值设为26小时
+        :param shop_storage: 商店中可购买的食材（食材名 -> 可购买数量）
+        :param time_limit: 上架菜品预计的售卖时间（小时）
+        :param strategy: 购买策略
         """
         self.data_path = data_path
-        self.time_limit = int(time_limit * 60)  # 转换为分钟
-        self.warehouse_storage = warehouse_storage
-        self.purchasable_ingredients = shop_storage
+        self.time_limit_minutes = int(time_limit * 60) \
+            if isinstance(time_limit, (int, float)) else DEFAULT_OPERATION_TIME
+        self.warehouse_storage = warehouse_storage.copy()
+        self.shop_storage = shop_storage.copy()
+        self.strategy = strategy
 
-        levels, ingredient_names = self._load_levels_and_ingredients()
+        levels, self.all_ingredient_names = self._load_levels_and_ingredients()
+        all_dishes = self._load_dishes()
         self.unlocked_dishes = [
-            dish for dish in self._load_dishes() if dish.unlock_level <= levels[dish.cookware]
-        ]  # 筛选已解锁的菜品
+            d for d in all_dishes if d.unlock_level <= levels.get(d.cookware, 0)
+        ]
 
-        # 计算总可用食材（仓库+商店）
-        self.total_ingredients = {
-            name: warehouse_storage.get(name, 0)+shop_storage.get(name, 0) for name in ingredient_names
-        }
-
+    # ── 数据加载 ──────────────────────────────────────────────
     def _load_dishes(self) -> List[Dish]:
         dishes: List[Dish] = []
-        with open(os.path.join(self.data_path, 'dishes.json'), "r", encoding="UTF-8") as file_dishes:
-            dic_dishes = json.load(file_dishes)
-            for cookware, current_cookware_dishes in dic_dishes.items():
-                for dic_dish in current_cookware_dishes:
-                    dishes.append(Dish(
-                        name=dic_dish['dish_id'],
-                        cookware=cookware,
-                        price=dic_dish.get('profit', 0),
-                        time=dic_dish.get('sell_time', 0),  # 已在Dish类中解决了除零错误
-                        unlock_level=dic_dish.get('unlock_level', 3),
-                        ingredients=dic_dish['ingredients'],
-                    ))
+        path = os.path.join(self.data_path, "dishes.json")
+        with open(path, "r", encoding="UTF-8") as f:
+            dic_dishes = json.load(f)
+        for cookware, cookware_dishes in dic_dishes.items():
+            for d in cookware_dishes:
+                dishes.append(Dish(
+                    name=d["dish_id"],
+                    cookware=cookware,
+                    price=d.get("profit", 0),
+                    time=d.get("sell_time", 0),
+                    unlock_level=d.get("unlock_level", 3),
+                    ingredients=d.get("ingredients", {}),
+                ))
         return dishes
 
     def _load_levels_and_ingredients(self) -> Tuple[Dict[str, int], List[str]]:
-        with open(os.path.join(self.data_path, 'player_status.json'), "r", encoding="UTF-8") as file_player_status:
-            player_status = json.load(file_player_status)
-        return player_status['levels'], player_status['ingredients']
+        path = os.path.join(self.data_path, "player_status.json")
+        with open(path, "r", encoding="UTF-8") as f:
+            ps = json.load(f)
+        return ps["levels"], ps["ingredients"]
 
-    def _calc_time_limit(self, dish: Dish) -> int:
-        """计算单个菜品在时间限制内最多能做多少份"""
-        if dish.time <= 0:
-            return 0
-        return int(self.time_limit / dish.time)
-
-    def _calc_ingredient_limit(self, dish: Dish, available: Dict[str, int]) -> int:
-        """计算食材限制下最多能做多少份"""
-        max_count = float('inf')
-        for ingredient, required in dish.ingredients.items():
-            if required > 0:
-                available_amount = available.get(ingredient, 0)
-                max_count = min(max_count, available_amount // required)
-        return int(max_count) if max_count != float('inf') else 0
-
-    def _optimize_single_dish(self, dish: Dish) -> Tuple[int, float]:
-        """优化单个菜品的制作数量"""
-        count = min(self._calc_time_limit(dish), self._calc_ingredient_limit(dish, self.total_ingredients))
-        profit = count * dish.price
-        return count, profit
-
-    @staticmethod
-    def _calc_bar_ratio(dish: Dish, count: int, available_ingredients: Dict[str, int]) -> Tuple[float, Dict[str, int]]:
-        """根据菜品、制作数量及当前食材计算进度条拖动的比例和制作后的剩余食材"""
-        ratio: float = 0
-        current_ingredients = available_ingredients.copy()
-
-        for ingredient, required_amount in dish.ingredients.items():
-            if required_amount <= 0:
-                continue
-                
-            current_amount = current_ingredients.get(ingredient, 0)
-            # 计算当前食材可以制作的最大数量
-            max_makeable = current_amount // required_amount
-            
-            if max_makeable > 0:
-                # 进度条比例 = 实际制作数量 / 最大可制作数量
-                current_ratio = count / max_makeable
+    # ── 食材可用量计算 ──────────────────────────────────────────
+    def _build_available(self, bought_set: FrozenSet[str]) -> Dict[str, int]:
+        """
+        根据购买的食材集合构建可用食材。
+        bought_set 中的食材 = 仓库 + 商店量；其余 = 仓库量。
+        """
+        available = {}
+        for name in self.all_ingredient_names:
+            base = self.warehouse_storage.get(name, 0)
+            if name in bought_set:
+                available[name] = base + self.shop_storage.get(name, 0)
             else:
-                current_ratio = 0
-            
-            # 可制作的数量取决于短板（剩余最少的食材），其对应的进度条比例最大
-            ratio = max(current_ratio, ratio)
-            
-            # 更新剩余食材
-            remaining_amount = current_amount - required_amount * count
-            current_ingredients[ingredient] = remaining_amount if remaining_amount > 0 else 0
+                available[name] = base
+        return available
 
-        return ratio, current_ingredients
-
-    def _optimize_two_dishes(self, dish1: Dish, dish2: Dish) -> Tuple[List[int], float]:
+    def _get_relevant_shop_ingredients(self, dishes: List[Dish]) -> List[str]:
         """
-        优化两个菜品的组合
-        由于两个菜品并行售卖，时间限制是独立的，需要在食材约束下最大化总收益
+        获取与给定菜品组合相关的、商店中有售的食材列表。
+        只有菜品确实需要的食材才考虑购买。
         """
-        time_limit1 = self._calc_time_limit(dish1)
-        time_limit2 = self._calc_time_limit(dish2)
-        best_counts, best_profit = [0, 0], 0
+        needed: Set[str] = set()
+        for dish in dishes:
+            for ing in dish.ingredients:
+                if ing in self.shop_storage:
+                    needed.add(ing)
+        return list(needed)
 
-        # 策略：枚举第一个菜品的数量，计算第二个菜品的最大数量
-        # 优化：如果菜品1的收益率更高，优先枚举收益率低的
-        if dish1.profit_rate < dish2.profit_rate:
-            dish1, dish2 = dish2, dish1
-            time_limit1, time_limit2 = time_limit2, time_limit1
-            swapped = True
+    # ── 菜品可制作量计算 ──────────────────────────────────────
+    def _calc_max_count(self, dish: Dish, available: Dict[str, int]) -> int:
+        """综合时间和食材限制计算最大可制作数量"""
+        # 时间限制
+        if dish.time <= 0:
+            time_limit = 0
         else:
-            swapped = False
+            time_limit = int(self.time_limit_minutes / dish.time)
 
-        # 枚举第一个菜品的数量
-        for count1 in range(time_limit1 + 1):
-            # 计算已使用的食材
-            used_ingredients = {}
-            can_make = True
+        # 食材限制
+        max_count_by_ingredients = float("inf")
+        for ing, required in dish.ingredients.items():
+            if required > 0:
+                amt = available.get(ing, 0)
+                max_count_by_ingredients = min(max_count_by_ingredients, amt // required)
+        ingredients_limit = int(max_count_by_ingredients) if max_count_by_ingredients != float("inf") else 0
 
+        return min(time_limit, ingredients_limit)
+
+    # ── 进度条比例计算 ────────────────────────────────────────
+    @staticmethod
+    def _calc_bar_ratio(
+            dish: Dish,
+            count: int,
+            available_ingredients: Dict[str, int],
+    ) -> Tuple[float, Dict[str, int]]:
+        """
+        根据菜品、制作数量及当前可用食材，
+        计算进度条拖动比例（三位小数）和制作后的剩余食材。
+
+        进度条终点 = 短板食材决定的最大可制作数量
+        比例 = count / 最大可制作数量
+        """
+        remaining = available_ingredients.copy()
+        if count == 0:
+            return 0.0, remaining
+
+        # 计算基于当前可用食材的最大可制作数量（短板）
+        max_makeable = float("inf")
+        for ing, required in dish.ingredients.items():
+            if required <= 0:
+                continue
+            amt = remaining.get(ing, 0)
+            max_makeable = min(max_makeable, amt // required)
+
+        if max_makeable == float("inf") or max_makeable <= 0:
+            # 没有任何食材需求或食材为0，无法制作
+            return 0.0, remaining
+
+        # 比例 = 需要的数量 / 最大可制作数量，截断到三位小数
+        # 使用 math.floor 来截断到三位（避免 round 可能的四舍五入导致超出1.0）
+        ratio = min(
+                math.floor(count / max_makeable * 1000) / 1000,
+                1.0
+        )
+
+        # 扣除食材
+        for ing, required in dish.ingredients.items():
+            if required <= 0:
+                continue
+            remaining[ing] = max(0, remaining.get(ing, 0) - required * count)
+
+        return ratio, remaining
+
+    # ── 菜品枚举 ────────────────────────────────────────────
+    def _evaluate_single(
+            self,
+            dish: Dish,
+            available: Dict[str, int]
+    ) -> Tuple[int, int]:
+        """在给定可用食材下，单菜品的最优数量和收益"""
+        count = self._calc_max_count(dish, available)
+        return count, count * dish.price
+
+    def _evaluate_two_dishes(
+            self,
+            dish1: Dish,
+            dish2: Dish,
+            available: Dict[str, int],
+    ) -> Tuple[List[int], int]:
+        """
+        在给定可用食材下，两个菜品的最优数量组合。
+        两菜品并行，食材共享，精确枚举。
+        考虑到任务对速度要求低、对精度要求高，因此完整枚举。
+        """
+        best_counts = [0, 0]
+        best_profit = 0
+
+        limit1 = self._calc_max_count(dish1, available)
+        for count1 in range(limit1 + 1):
+            # 计算菜品1在制作count1份后的剩余食材
+            remaining = available.copy()
+            feasible = True
             for ingredient, required in dish1.ingredients.items():
-                total_needed = count1 * required
-                if total_needed > self.total_ingredients.get(ingredient, 0):
-                    can_make = False
+                if required <= 0:
+                    continue
+                remaining[ingredient] = remaining.get(ingredient, 0) - required * count1
+                if remaining[ingredient] < 0:
+                    # count1已超出食材限制
+                    feasible = False
                     break
-                used_ingredients[ingredient] = total_needed
 
-            if not can_make:
+            if not feasible:
                 break
 
-            # 计算剩余食材
-            remaining_ingredients = {}
-            for ingredient, total in self.total_ingredients.items():
-                remaining_ingredients[ingredient] = total - used_ingredients.get(ingredient, 0)
-
-            # 计算菜品2在剩余食材下的最大数量
-            ingredient_limit2 = self._calc_ingredient_limit(
-                dish2, remaining_ingredients
-            )
-            count2 = min(time_limit2, ingredient_limit2)
-
-            # 计算总收益
+            # 菜品2在剩余食材下的最大数量
+            count2 = self._calc_max_count(dish2, available)
             profit = count1 * dish1.price + count2 * dish2.price
+            if profit > best_profit:
+                best_profit = profit
+                best_counts = [count1, count2]
+
+        return best_counts, best_profit
+
+    # ── 主求解 ────────────────────────────────────────────────
+    def find_best_solution(self) -> OptimizationResult:
+        """
+        找到最优菜品组合方案。
+
+        根据购买策略的不同：
+        - NO_PURCHASE / BUY_ALL: 可用食材是确定的，直接求解。
+        - BUY_MISSING: 可用食材取决于选哪些菜品（因为只买缺少的食材），
+          需要对每个候选组合单独计算可用食材。
+        """
+        if self.strategy == PurchaseStrategy.NO_PURCHASE:
+            return self._solve_fixed(frozenset())
+        elif self.strategy == PurchaseStrategy.BUY_ALL:
+            return self._solve_fixed(frozenset(self.shop_storage.keys()))
+        else:  # BUY_MISSING
+            return self._solve_buy_missing()
+
+    '''针对固定食材'''
+    def _solve_fixed(self, bought_set: FrozenSet[str]) -> OptimizationResult:
+        """可用食材固定时的求解（NO_PURCHASE / BUY_ALL）"""
+        available = self._build_available(bought_set)
+
+        best_dishes: List[Dish] = []
+        best_counts: List[int] = []
+        best_profit: int = 0
+
+        for dish in self.unlocked_dishes:
+            count, profit = self._evaluate_single(dish, available)
+            if profit > best_profit:
+                best_profit = profit
+                best_dishes = [dish]
+                best_counts = [count]
+
+        for d1, d2 in combinations(self.unlocked_dishes, 2):
+            counts, profit = self._evaluate_two_dishes(d1, d2, available)
+            if profit > best_profit:
+                best_profit = profit
+                best_dishes = [d1, d2]
+                best_counts = counts
+
+        return self._build_result(best_dishes, best_counts, best_profit, bought_set)
+
+    '''针对BUY_MISSING'''
+    def _solve_buy_missing(self) -> OptimizationResult:
+        """
+        BUY_MISSING 策略：只购买「能提升收益」的食材。
+
+        语义：对于最终选定的菜品组合，如果某种食材的总需求超出仓库存量，
+        才从商店购买（买满商店限购量）。
+
+        实现：对每个候选菜品组合，枚举相关商店食材的购买子集，
+        计算每种购买方案下的最优收益，取全局最优。
+
+        优化：商店食材中只考虑该组合实际需要的食材，
+        且通常相关食材种类不多（游戏场景），子集枚举可行。
+        """
+        best_dishes: List[Dish] = []
+        best_counts: List[int] = []
+        best_profit: int = 0
+        best_bought: FrozenSet[str] = frozenset()
+
+        # 单菜品
+        for dish in self.unlocked_dishes:
+            dishes_list = [dish]
+            bought, counts, profit = self._enumerate_subsets_single(dish)
+            if profit > best_profit:
+                best_profit = profit
+                best_dishes = dishes_list
+                best_counts = counts
+                best_bought = bought
+
+        # 双菜品
+        for d1, d2 in combinations(self.unlocked_dishes, 2):
+            bought, counts, profit = self._enumerate_subsets_two(d1, d2)
+            if profit > best_profit:
+                best_profit = profit
+                best_dishes = [d1, d2]
+                best_counts = counts
+                best_bought = bought
+
+        # 验证购买合理性：最终方案中，只保留需求确实超出仓库的食材
+        final_bought = self._filter_actually_missing(
+            best_dishes, best_counts, best_bought
+        )
+        return self._build_result(best_dishes, best_counts, best_profit, final_bought)
+
+    def _enumerate_subsets_single(self, dish: Dish) -> Tuple[FrozenSet[str], List[int], int]:
+        """枚举购买子集，单菜品"""
+        best_bought: FrozenSet[str] = frozenset()
+        best_count = 0
+        best_profit = 0
+
+        # 枚举所有子集：从空集到全集
+        relevant_shop_ings = self._get_relevant_shop_ingredients([dish])
+        n = len(relevant_shop_ings)
+        for mask in range(1 << n):
+            bought = frozenset(
+                relevant_shop_ings[i] for i in range(n) if mask & (1 << i)
+            )
+            available = self._build_available(bought)
+            count, profit = self._evaluate_single(dish, available)
 
             if profit > best_profit:
                 best_profit = profit
-                if swapped:
-                    best_counts = [count2, count1]
-                else:
-                    best_counts = [count1, count2]
+                best_count = count
+                best_bought = bought
 
-        if swapped:
-            return best_counts, best_profit
-        else:
-            return best_counts, best_profit
+        return best_bought, [best_count], best_profit
 
-    def find_best_solution(self) -> Tuple[List[MenuSolution], Dict[str, int]]:
-        """找到最优菜品组合方案及需要购买的食材"""
-        best_solution: Dict[str, List[Dish]|List[int]|int|List[float]] = {
-            'dishes': [],
-            'counts': [],
-            'profit': 0,
-            'total_time_hours': [],
-        }
+    def _enumerate_subsets_two(
+            self,
+            d1: Dish,
+            d2: Dish
+    ) -> Tuple[FrozenSet[str], List[int], int]:
+        """枚举购买子集，双菜品"""
+        best_bought: FrozenSet[str] = frozenset()
+        best_counts = [0, 0]
+        best_profit = 0
 
-        # 尝试单个菜品
-        for dish in self.unlocked_dishes:
-            count, profit = self._optimize_single_dish(dish)
-            if profit > best_solution['profit']:
-                best_solution = {
-                    'dishes': [dish],
-                    'counts': [count],
-                    'profit': profit,
-                    'total_time_hours': [count * dish.time / 60],
-                }
+        relevant_shop_ings = self._get_relevant_shop_ingredients([d1, d2])
+        n = len(relevant_shop_ings)
+        for mask in range(1 << n):
+            bought = frozenset(
+                relevant_shop_ings[i] for i in range(n) if mask & (1 << i)
+            )
+            available = self._build_available(bought)
+            counts, profit = self._evaluate_two_dishes(d1, d2, available)
 
-        # 尝试两个菜品的组合
-        for dish1, dish2 in combinations(self.unlocked_dishes, 2):
-            counts, profit = self._optimize_two_dishes(dish1, dish2)
-            if profit > best_solution['profit']:
-                best_solution = {
-                    'dishes': [dish1, dish2],
-                    'counts': counts,
-                    'profit': profit,
-                    'total_time_hours': [
-                        counts[0] * dish1.time / 60,
-                        counts[1] * dish2.time / 60
-                    ],
-                }
+            if profit > best_profit:
+                best_profit = profit
+                best_counts = counts
+                best_bought = bought
 
-        # 计算食材需求和购买计划
+        return best_bought, best_counts, best_profit
+
+    def _filter_actually_missing(
+            self,
+            dishes: List[Dish],
+            counts: List[int],
+            bought: FrozenSet[str],
+    ) -> FrozenSet[str]:
+        """
+        最终校验：在最终方案中，只保留总需求确实超出仓库存量的食材购买。
+        如果某食材买了但实际需求没超仓库，就去掉（不影响count，因为仓库就够了）。
+        """
+        total_demand: Dict[str, int] = {}
+        for dish, count in zip(dishes, counts):
+            for ing, req in dish.ingredients.items():
+                total_demand[ing] = total_demand.get(ing, 0) + req * count
+
+        actually_missing: Set[str] = set()
+        for ing_name in bought:
+            demand = total_demand.get(ing_name, 0)
+            warehouse_amt = self.warehouse_storage.get(ing_name, 0)
+            if demand > warehouse_amt:
+                actually_missing.add(ing_name)
+
+        return frozenset(actually_missing)
+
+    # ── 构建结果 ──────────────────────────────────────────────
+    def _build_result(
+        self,
+        dishes: List[Dish],
+        counts: List[int],
+        total_profit: int,
+        bought_set: FrozenSet[str],
+    ) -> OptimizationResult:
+        """构建最终结果，用实际可用食材计算进度条比例"""
+        available = self._build_available(bought_set)
         solutions: List[MenuSolution] = []
+        remaining = available.copy()
+
+        for dish, count in zip(dishes, counts):
+            ratio, remaining = self._calc_bar_ratio(dish, count, remaining)
+            solutions.append(MenuSolution(
+                dish=dish,
+                count=count,
+                bar_ratio=ratio,
+            ))
+
+        # 购买计划：bought_set 中的食材，购买量 = 商店限购量
         purchase_plan: Dict[str, int] = {}
-        remaining_ingredients: Dict[str, int] = self.total_ingredients.copy()
-        for idx in range(len(best_solution['dishes'])):
-            dish: Dish = best_solution['dishes'][idx]
-            count: int = best_solution['counts'][idx]
-            ratio, remaining_ingredients = self._calc_bar_ratio(dish, count, remaining_ingredients)
-            solutions.append(MenuSolution(dish, count, ratio))
+        for ing_name in bought_set:
+            shop_amt = self.shop_storage.get(ing_name, 0)
+            if shop_amt > 0:
+                purchase_plan[ing_name] = shop_amt
 
-            # 计算总共需要的食材
-            for ingredient_name, ingredient_demand in dish.ingredients.items():
-                if ingredient_name in self.purchasable_ingredients.keys():
-                    try:
-                        purchase_plan[ingredient_name] += ingredient_demand * count
-                    except KeyError:
-                        purchase_plan[ingredient_name] = ingredient_demand * count
-
-        # 减去仓库中已有的，如果结果小于0（仓库储量即可供应全部需求），将其设为0
-        for name, demand in purchase_plan.items():
-            rectified_demand = demand - self.warehouse_storage.get(name, 0)
-            purchase_plan[name] = rectified_demand if rectified_demand > 0 else 0
-
-        return solutions, purchase_plan
-        
+        return OptimizationResult(
+            solutions=solutions,
+            purchase_plan=purchase_plan,
+            total_profit=total_profit,
+            strategy=self.strategy
+        )

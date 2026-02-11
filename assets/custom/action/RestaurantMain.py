@@ -1,201 +1,319 @@
 from maa.context import Context
 from maa.custom_action import CustomAction
 from maa.define import Rect, RecognitionDetail
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Optional
 import numpy as np
 import time
 import json
 import os
 
-# 由于MFW的缺陷，在导入自定义模块时需要使用sys将MFW.exe所在目录加入sys.path，并从该路径导入模块
-# 以下导入路径仅适用打包后的代码，如果在这里显示错误那纯粹是IDE抽风，实际上可以正常运行
+# 由于MFW前端的缺陷，在导入自定义模块时需要使用sys将MFW.exe所在目录加入sys.path，并从该路径导入模块
+# 以下导入路径仅适用打包后的代码，若IDE报错请无视，经实际测试可以正常运行
 from pathlib import Path
 import sys
 current_file = Path(__file__).resolve()
 sys.path.append(str(current_file.parent.parent.parent))
-from custom.action.RestaurantOptimization import RestaurantOptimizer
+from custom.action.RestaurantOptimization import RestaurantOptimizer, PurchaseStrategy, OptimizationResult
+
+
+# ── 常量 ──────────────────────────────────────────────────
+EMPTY_IMAGE: np.ndarray = np.zeros((1, 1, 3), dtype=np.uint8)
+
+# 界面坐标常量
+COOKWARE_ROI: list = [110, 143, 184, 381]
+DISH_LIST_ROI: list = [303, 136, 384, 511]
+ADD_BUTTON_OFFSET: Rect = Rect(190, 20, 0, 0)  # 从菜品名到"添加"按钮的偏移
+BAR_START_X: int = 681
+BAR_END_X: int = 865
+BAR_Y: int = 522
+MENU_SWIPE_BEGIN: list = [480, 623, 0, 0]
+MENU_SWIPE_END: list = [480, 136, 0, 0]
+ADD_DISH_ROI: list = [718, 574, 152, 68]
+
+MAX_DISH_SEARCH_ATTEMPTS: int = 3
+
+# 前端参数名到内部枚举的映射
+STRATEGY_MAPPING: Dict[str, PurchaseStrategy] = {
+    "BuyAllDemand": PurchaseStrategy.BUY_ALL,
+    "OnlyBuyDemand": PurchaseStrategy.BUY_MISSING,
+    "DoNotBuy": PurchaseStrategy.NO_PURCHASE,
+}
 
 
 class RestaurantMainProcess(CustomAction):
-    """传入决策过程需要最大化收益的时间: float"""
-    def run(self, context: Context, argv: CustomAction.RunArg) -> CustomAction.RunResult | bool:
-        # 加载基本参数
-        absolute_config_path: str = os.path.join(os.getcwd(), "custom_task_config\\restaurant")
-        empty_pix: np.ndarray[tuple[int, int, int], np.uint8] = np.zeros((1,1,3), dtype=np.uint8)
-        self.define_basic_tasks(context)
-        estimated_selling_time: str = json.loads(argv.custom_action_param)["estimated_selling_time"]
-        ingredients_purchase_option: Literal['BuyAllDemand', 'OnlyBuyDemand', 'DoNotBuy'] = json.loads(
-            argv.custom_action_param
-        )["ingredients_purchase_option"]
+    """
+    餐厅经营自动化主流程。
+    传入参数（通过 custom_action_param JSON）：
+    - estimated_selling_time: float, 预计售卖时间（小时）
+    - ingredients_purchase_option: "BuyAllDemand" | "OnlyBuyDemand" | "DoNotBuy"
+    """
+    def run(
+            self, context: Context, argv: CustomAction.RunArg
+    ) -> CustomAction.RunResult | bool:
+        config_path = os.path.join(
+            os.getcwd(), "custom_task_config", "restaurant"
+        )
+        self._define_tasks(context)
 
-        warehouse_storage = self.decode_scanning_results(context.run_recognition("warehouse_scan", empty_pix))
-        shop_storage = self.decode_scanning_results(context.run_recognition("shop_scan", empty_pix)) \
-            if ingredients_purchase_option != "DoNotBuy" else {}  # 购买选项为DoNotBuy时不扫描商店，也不视其中食材为可用
+        '''参数解析'''
+        params = json.loads(argv.custom_action_param)
+        strategy = STRATEGY_MAPPING.get(
+            params.get("ingredients_purchase_option", "OnlyBuyDemand"),
+            PurchaseStrategy.BUY_MISSING
+        )
+        selling_time = self._parse_selling_time(
+            params.get("estimated_selling_time", None)
+        )
 
-        try:
-            decision_time = float(estimated_selling_time)
-            optimizer = RestaurantOptimizer(absolute_config_path, warehouse_storage, shop_storage, decision_time)
-        except (json.decoder.JSONDecodeError, ValueError):
-            optimizer = RestaurantOptimizer(absolute_config_path, warehouse_storage, shop_storage)
+        '''扫描仓库与商店'''
+        warehouse_storage = self._scan_storage(context, "warehouse_scan")
+        if strategy != PurchaseStrategy.NO_PURCHASE:
+            shop_storage = self._scan_storage(context, "shop_scan")
+        else:
+            shop_storage = {}
 
-        '''上架流程'''
-        while True:
-            solutions, demands = optimizer.find_best_solution()
-            if not solutions:
-                self.push_message(context, "未得出上架计划，跳过任务")
-                break
-                
-            # 购买任务触发条件：demands不为空 且 (购买选项为BuyAllDemand 或 (购买选项为OnlyBuyDemand 且 demands的值至少有一个大于0))
-            if demands and (ingredients_purchase_option == "BuyAllDemand" or
-                            (ingredients_purchase_option == "OnlyBuyDemand" and max(demands.values()) >0)):
-                context.run_task("shop_purchase", {
-                    "shop_purchase": {
-                        "action": {
-                            "type": "Custom",
-                            "param": {
-                                "custom_action": "ShopPurchase",
-                                "custom_action_param": {
-                                    "demands" : demands,
-                                    "option": ingredients_purchase_option
-                                }
-                            }
-                        },
-                        "on_error": ["返回上级菜单"]
-                    }
-                })
+        '''优化求解'''
+        optimizer = RestaurantOptimizer(
+            data_path=config_path,
+            warehouse_storage=warehouse_storage,
+            shop_storage=shop_storage,
+            time_limit=selling_time,
+            strategy=strategy
+        )
+        result = optimizer.find_best_solution()
+        self._push_message(
+            context,
+            f"方案：{result.solutions}\n\n"
+            f"预期收益：{result.total_profit}\n\n"
+            f"购买计划：{result.purchase_plan}"
+        )
+        if not result.solutions:
+            self._push_message(context, "未得出上架计划，跳过任务")
+            context.run_task("直接返回主菜单")
+            return CustomAction.RunResult(success=True)
 
-            # 上架菜品
-            context.run_task("进入今日菜单")
-            context.run_task("下架菜品任务")
-            for solution in solutions:
-                context.run_task("choose_cooker", {
-                    "choose_cooker": {
-                        "recognition": {
-                            "type": "OCR",
-                            "param": {
-                                "roi": [110, 143, 184, 381],
-                                "expected": [solution.dish.cookware]
-                            }
-                        },
-                        "action": "Click"
-                    }
-                })  # 进入对应厨具的界面
-                for _ in range(3):  # 尝试寻找菜品并上架
-                    target_dish = context.run_recognition("reco_planned_dish",
-                                                          context.tasker.controller.post_screencap().wait().get(),
-                                                          {
-                                                              "reco_planned_dish": {
-                                                                  "recognition": {
-                                                                      "type": "OCR",
-                                                                      "param": {
-                                                                          "roi": [303, 136, 384, 511],
-                                                                          "expected": [solution.dish.name]
-                                                                      }
-                                                                  },
-                                                                  "timeout": 3000,
-                                                                  "on_error": ["空白任务"]
-                                                              }
-                                                          })
-                    if target_dish is None or target_dish.best_result is None:  # 未找到对应菜品，下滑并再次寻找
-                        context.run_task("menu_page_turning")
-                        continue
-                    else:
-                        context.run_task("add_planned_dish", {
-                            "add_planned_dish": {
-                                "action": {
-                                    "type": "Click",
-                                    "param": {
-                                        "target": list(Rect(*target_dish.box)+Rect(190, 20, 0, 0))
-                                    }
-                                },
-                                "post_wait_freeze": 1000
-                            }
-                        })
-                        bar_end_x = round(681 + (865 - 681) * solution.bar_ratio + 0.5)  # 向上取整
-                        context.run_task("swipe_menu_bar", {
-                            "swipe_menu_bar": {
-                                "action": {
-                                    "type": "Swipe",
-                                    "param": {
-                                        "begin": [681, 522, 1, 1],
-                                        "end": [bar_end_x, 522, 1, 1],
-                                        "duration": 1000
-                                    }
-                                }
-                            }
-                        })
-                        context.run_task("add_dish")
-                        time.sleep(3)
-                        break
-                else:  # 菜品未找到，发送信息至操作界面
-                    self.push_message(context, f"菜品 {solution.dish.name} 未找到")
+        '''执行操作'''
+        self._execute_purchase(context, result, strategy)
+        self._execute_serving(context, result)
 
-            # 上架菜品流程结束，退出菜谱界面和外层while循环
-            context.run_action("点击下方空白")
-            break
-
-        '''餐厅任务完成，退出至主页'''
+        '''返回主页'''
         context.run_task("直接返回主菜单")
         return CustomAction.RunResult(success=True)
 
     @staticmethod
-    def decode_scanning_results(scanning_results: RecognitionDetail) -> Dict[str, int]:
-        # 由于WarehouseScan和ShopScan的设计，best_result中必定有结果，无需判断是否为None
-        encoded = scanning_results.best_result.detail
-        if isinstance(encoded, str):
-            return json.loads(encoded)
-        if isinstance(encoded, dict):
-            return encoded
+    def _scan_storage(context: Context, task_name: str) -> Dict[str, int]:
+        """执行仓库或商店扫描，返回 {名称: 数量} 字典"""
+        detail = context.run_recognition(task_name, EMPTY_IMAGE)
+        if detail is None or detail.best_result is None:
+            return {}
+        result = detail.best_result.detail
+        if isinstance(result, str):
+            return json.loads(result)
+        if isinstance(result, dict):
+            return result
         return {}
 
     @staticmethod
-    def push_message(context: Context, message: Any):
-        context.run_task("push_message", {
-            "push_message": {
-                "focus": {
-                    "Node.Action.Starting": f"{str(message)}"
+    def _execute_purchase(
+            context: Context,
+            result: OptimizationResult,
+            strategy: PurchaseStrategy,
+    ):
+        """菜品购买流程"""
+        if strategy == PurchaseStrategy.NO_PURCHASE:
+            return
+        if not result.purchase_plan:
+            return
+
+        # BUY_ALL: 购买计划中所有食材都要买
+        # BUY_MISSING: 购买计划中只包含确实缺少的食材
+        if strategy == PurchaseStrategy.BUY_ALL:
+            option: str = PurchaseStrategy.BUY_ALL.value
+        else:
+            option: str = PurchaseStrategy.BUY_MISSING.value
+
+        context.run_task("shop_purchase", {
+            "shop_purchase": {
+                "action": {
+                    "type": "Custom",
+                    "param": {
+                        "custom_action": "ShopPurchase",
+                        "custom_action_param": json.dumps({
+                            "demands": result.purchase_plan,
+                            "option": option
+                        }),
+                    },
+                },
+                "on_error": ["返回上级菜单"]
+            }
+        })
+
+    def _execute_serving(self, context: Context, result: OptimizationResult):
+        """执行菜品上架流程"""
+        context.run_task("进入今日菜单")
+        context.run_task("下架菜品任务")
+
+        for solution in result.solutions:
+            if solution.count <= 0:
+                continue
+
+            # 选择对应厨具
+            context.run_task("choose_cooker", {
+                "choose_cooker": {
+                    "recognition": {
+                        "type": "OCR",
+                        "param": {
+                            "roi": COOKWARE_ROI,
+                            "expected": [solution.dish.cookware]
+                        },
+                    },
+                    "action": "Click"
+                }
+            })
+
+            # 查找并上架菜品
+            if not self._find_and_serve_dish(context, solution):
+                self._push_message(
+                    context, f"菜品 {solution.dish.name} 未找到"
+                )
+
+        context.run_action("点击下方空白")
+
+    def _find_and_serve_dish(self, context: Context, solution) -> bool:
+        """
+        在菜品列表中查找目标菜品并上架。
+        返回是否成功找到并上架。
+        """
+        for attempt in range(MAX_DISH_SEARCH_ATTEMPTS):
+            screenshot = context.tasker.controller.post_screencap().wait().get()
+            target = context.run_recognition(
+                "reco_planned_dish", screenshot,
+                {
+                    "reco_planned_dish": {
+                        "recognition": {
+                            "type": "OCR",
+                            "param": {
+                                "roi": DISH_LIST_ROI,
+                                "expected": [solution.dish.name]
+                            },
+                        },
+                        "timeout": 3000,
+                        "on_error": ["空白任务"]
+                    }
+                }
+            )
+
+            if target is None or target.best_result is None:
+                # 未找到，翻页后重试
+                context.run_task("menu_page_turning")
+                continue
+
+            # 点击菜品旁的添加按钮
+            dish_box = Rect(*target.best_result.box) if not isinstance(
+                target.best_result.box, Rect
+            ) else target.best_result.box
+            add_button_target = [
+                dish_box.x + ADD_BUTTON_OFFSET.x,
+                dish_box.y + ADD_BUTTON_OFFSET.y,
+                ADD_BUTTON_OFFSET.w,
+                ADD_BUTTON_OFFSET.h,
+            ]
+
+            context.run_task("add_planned_dish", {
+                "add_planned_dish": {
+                    "action": {
+                        "type": "Click",
+                        "param": {"target": add_button_target}
+                    },
+                    "post_wait_freeze": 1000
+                }
+            })
+
+            # 拖动进度条
+            self._swipe_bar(context, solution.bar_ratio)
+
+            # 点击上架
+            context.run_task("add_dish")
+            time.sleep(3)
+            return True
+
+        return False
+
+    @staticmethod
+    def _swipe_bar(context: Context, ratio: float):
+        """根据比例拖动进度条"""
+        if ratio <= 0:
+            return
+
+        bar_target_x = round(BAR_START_X + (BAR_END_X - BAR_START_X) * ratio + 0.5)
+        bar_target_x = min(bar_target_x, BAR_END_X)  # 防止超出终点
+        context.run_task("swipe_menu_bar", {
+            "swipe_menu_bar": {
+                "action": {
+                    "type": "Swipe",
+                    "param": {
+                        "begin": [BAR_START_X, BAR_Y, 1, 1],
+                        "end": [bar_target_x, BAR_Y, 1, 1],
+                        "duration": 1000
+                    }
                 }
             }
         })
 
     @staticmethod
-    def define_basic_tasks(context: Context):
-        # 定义餐厅自定义任务
+    def _parse_selling_time(raw_value) -> Optional[float]:
+        """安全解析售卖时间，失败返回 None（使用优化器默认值）"""
+        if raw_value is None:
+            return None
+        try:
+            value = float(raw_value)
+            return value if value > 0 else None
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _push_message(context: Context, message: Any):
+        context.run_task("push_message", {
+            "push_message": {
+                "focus": {
+                    "Node.Action.Starting": str(message),
+                },
+            },
+        })
+
+    @staticmethod
+    def _define_tasks(context: Context):
         context.override_pipeline({
             "shop_scan": {
                 "recognition": {
                     "type": "Custom",
-                    "param": {
-                        "custom_recognition": "ShopScan"
-                    }
+                    "param": {"custom_recognition": "ShopScan"}
                 }
             },
             "warehouse_scan": {
                 "recognition": {
                     "type": "Custom",
-                    "param": {
-                        "custom_recognition": "WarehouseScan"
-                    }
+                    "param": {"custom_recognition": "WarehouseScan"}
                 }
             },
             "menu_page_turning": {
                 "action": {
                     "type": "Swipe",
                     "param": {
-                        "begin": [480, 623, 0, 0],
-                        "end": [480, 136, 0, 0],
+                        "begin": MENU_SWIPE_BEGIN,
+                        "end": MENU_SWIPE_END,
                         "duration": 2000,
                         "end_hold": 1000
-                    }
+                    },
                 }
             },
             "add_dish": {
                 "recognition": {
                     "type": "OCR",
                     "param": {
-                        "roi": [718, 574, 152, 68],
+                        "roi": ADD_DISH_ROI,
                         "expected": ["上架"]
-                    }
+                    },
                 },
                 "action": "Click",
                 "post_wait_freeze": 2000
