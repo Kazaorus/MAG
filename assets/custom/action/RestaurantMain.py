@@ -83,9 +83,10 @@ class RestaurantMainProcess(CustomAction):
         result = optimizer.find_best_solution()
         self._push_message(
             context,
-            f"方案：{result.solutions}\n\n"
-            f"预期收益：{result.total_profit}\n\n"
-            f"购买计划：{result.purchase_plan}"
+            f"方案：{result.solutions}\n"
+            f"预期收益：{result.total_profit}\n"
+            f"购买计划：{result.purchase_plan}\n"
+            f"策略：{strategy.value}"
         )
         if not result.solutions:
             self._push_message(context, "未得出上架计划，跳过任务")
@@ -138,10 +139,10 @@ class RestaurantMainProcess(CustomAction):
                     "type": "Custom",
                     "param": {
                         "custom_action": "ShopPurchase",
-                        "custom_action_param": json.dumps({
+                        "custom_action_param": {
                             "demands": result.purchase_plan,
                             "option": option
-                        }),
+                        },
                     },
                 },
                 "on_error": ["返回上级菜单"]
