@@ -305,7 +305,11 @@ class RestaurantOptimizer:
                 best_dishes = [d1, d2]
                 best_counts = counts
 
-        return self._build_result(best_dishes, best_counts, best_profit, bought_set)
+        demand_ingredients = []
+        for dish in best_dishes:
+            demand_ingredients += list(dish.ingredients.keys())
+
+        return self._build_result(best_dishes, best_counts, best_profit, frozenset(demand_ingredients))
 
     '''针对BUY_MISSING'''
     def _solve_buy_missing(self) -> OptimizationResult:

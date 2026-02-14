@@ -105,54 +105,18 @@ def define_swipe_task(context: Context, task_name: str,
     context.override_pipeline(task_config)
 
 
-# ── OCR结果分类与匹配 ────────────────────────────────────
-def classify_ocr_results(
-    ocr_results: List[OCRResult],
-) -> Tuple[List[OcrItem], List[OcrItem]]:
-    """
-    将OCR结果分为文本项（食材名）和数值项（数量）。
-    返回 (items, quantities)
-    """
-    items: List[OcrItem] = []
-    quantities: List[OcrItem] = []
-    for result in ocr_results:
-        try:
-            num = parse_number(result.text)
-            quantities.append(OcrItem(num, to_rect(result.box)))
-        except (ValueError, IndexError):
-            items.append(OcrItem(result.text, to_rect(result.box)))
-    return items, quantities
-
-
-def match_items_to_quantities(
-    items: List[OcrItem],
-    quantities: List[OcrItem],
-) -> Dict[str, int]:
-    """
-    将物品名与最近的数量配对。
-    使用名称右上角与数字左下角的曼哈顿距离进行匹配。
-    """
-    matched: Dict[str, int] = {}
-    remaining_quantities = quantities.copy()  # 不修改原列表
-
-    for item in items:
-        if not remaining_quantities:
-            break
-
-        best_match: Optional[OcrItem] = None
-        best_distance = float('inf')
-
-        for qty in remaining_quantities:
-            dist = manhattan_distance(item.corner(1), qty.corner(2))
-            if dist < best_distance:
-                best_distance = dist
-                best_match = qty
-
-        if best_match is not None:
-            matched[item.identifier] = best_match.identifier
-            remaining_quantities.remove(best_match)
-
-    return matched
+def load_merchandise_limits() -> Dict[str, int]:
+    """加载食材限购数据"""
+    path = os.path.join(
+        os.getcwd(),
+        "custom_task_config", "restaurant", "ingredients.json",
+    )
+    with open(path, "r", encoding="UTF-8") as f:
+        data = json.load(f)
+    return {
+        name: int(param["shop_daily_limit"])
+        for name, param in data.items()
+    }
 
 
 # ── 仓库扫描 ──────────────────────────────────────────────
@@ -195,8 +159,8 @@ class WarehouseScan(CustomRecognition):
                 continue
 
             # 分类、匹配；若出现重复以首次匹配到的为准
-            page_data = match_items_to_quantities(
-                *classify_ocr_results(confident_results)
+            page_data = self._match_items_to_quantities(
+                *self._classify_ocr_results(confident_results)
             )
             is_last_page = False
             for name, count in page_data.items():
@@ -212,6 +176,61 @@ class WarehouseScan(CustomRecognition):
 
         context.run_task("点击下方空白")
         return CustomRecognition.AnalyzeResult(argv.roi, warehouse_stock)
+
+    @staticmethod
+    def _match_items_to_quantities(
+            items: List[OcrItem],
+            quantities: List[OcrItem],
+    ) -> Dict[str, int]:
+        """
+        将物品名与最近的数量配对。
+        使用名称右上角与数字左下角的曼哈顿距离进行匹配。
+        """
+        matched: Dict[str, int] = {}
+        remaining_quantities = quantities.copy()  # 不修改原列表
+        filtered_items: List[OcrItem] = [
+            item for item in items
+            if item.identifier in load_merchandise_limits()
+        ]
+
+        for item in filtered_items:
+            if not remaining_quantities:
+                break
+
+            best_match: Optional[OcrItem] = None
+            best_distance = float('inf')
+
+            for qty in remaining_quantities:
+                dist = manhattan_distance(item.corner(1), qty.corner(2))
+                if dist < best_distance and dist < 100:
+                    best_distance = dist
+                    best_match = qty
+
+            if best_match is not None:
+                matched[item.identifier] = best_match.identifier
+                remaining_quantities.remove(best_match)
+            else:  # 1经常无法被OCR识别到，因此作为默认结果
+                matched[item.identifier] = 1
+
+        return matched
+
+    @staticmethod
+    def _classify_ocr_results(
+            ocr_results: List[OCRResult],
+    ) -> Tuple[List[OcrItem], List[OcrItem]]:
+        """
+        将OCR结果分为文本项（食材名）和数值项（数量）。
+        返回 (items, quantities)
+        """
+        items: List[OcrItem] = []
+        quantities: List[OcrItem] = []
+        for result in ocr_results:
+            try:
+                num = parse_number(result.text)
+                quantities.append(OcrItem(num, to_rect(result.box)))
+            except (ValueError, IndexError):
+                items.append(OcrItem(result.text, to_rect(result.box)))
+        return items, quantities
 
     @staticmethod
     def _define_tasks(context: Context):
@@ -245,12 +264,14 @@ class ShopScan(CustomRecognition):
             self, context: Context, argv: CustomRecognition.AnalyzeArg
     ) -> CustomRecognition.AnalyzeResult:
         self._define_tasks(context)
-        merchandise_limits = self._load_merchandise_limits()
+        merchandise_limits = load_merchandise_limits()
         context.run_task("进入餐厅商店")
 
         shop_stock: Dict[str, int] = {}
+        sold_outs: Set[str] = set()  # 已售罄食材
         consecutive_failures = 0
-        while True:
+        page_num = 1
+        while page_num <= SHOP_MAX_PAGES:
             # 截图识别；处理可能的失败
             ocr_detail = context.run_recognition(
                 "gain_shop_category",
@@ -264,15 +285,19 @@ class ShopScan(CustomRecognition):
             consecutive_failures = 0
 
             is_last_page = False
-            for ingredient in self._filter_available(ocr_detail):
+            ingredients, sold_out = self._filter_available(ocr_detail)
+            sold_outs.update(sold_out)
+            for ingredient in ingredients:
                 if ingredient in shop_stock:
                     is_last_page = True
-                else:
+                elif ingredient not in sold_outs:
+                    # 上一页识别到的售罄食材在下一页可能因为未识别到标志等原因异常加入，因此需要另外排除
                     shop_stock[ingredient] = merchandise_limits[ingredient]
 
             if is_last_page:
                 break
 
+            page_num += 1
             context.run_action("shop_page_turning")
 
         context.run_task("点击下方空白")
@@ -280,29 +305,35 @@ class ShopScan(CustomRecognition):
         return CustomRecognition.AnalyzeResult(argv.roi, shop_stock)
 
     @staticmethod
-    def _filter_available(recognition_detail: RecognitionDetail) -> List[str]:
+    def _filter_available(recognition_detail: RecognitionDetail) -> Tuple[List[str], Set[str]]:
         """
         从OCR结果中筛选可购买的食材名称。
         排除"限购"、"本日售罄"文本，并移除已售罄标记下方最近的食材。
+        返回可用食材列表、售罄食材集合
         """
         items: List[OcrItem] = []
         sold_out_signs: List[OcrItem] = []
+        sold_out_ingredients: Set[str] = set()
 
         for result in recognition_detail.filtered_results:
             if result.score <= OCR_SCORE_THRESHOLD:
                 continue
             text = result.text
-            if "本日售罄" in text:
+            if "售罄" in text:
                 sold_out_signs.append(OcrItem(text, to_rect(result.box)))
             elif "限购" not in text:
                 items.append(OcrItem(text, to_rect(result.box)))
 
         # 移除售罄标记正下方最近的食材
+        filtered_items: List[OcrItem] = [
+            item for item in items
+            if item.identifier in load_merchandise_limits()
+        ]
         for sign in sold_out_signs:
             nearest: Optional[OcrItem] = None
             nearest_dist = float("inf")
 
-            for item in items:
+            for item in filtered_items:
                 # 食材必须在售罄标记下方
                 if item.position.y <= sign.position.y:
                     continue
@@ -312,23 +343,10 @@ class ShopScan(CustomRecognition):
                     nearest = item
 
             if nearest is not None:
-                items.remove(nearest)
+                filtered_items.remove(nearest)
+                sold_out_ingredients.add(nearest.identifier)
 
-        return [item.identifier for item in items]
-
-    @staticmethod
-    def _load_merchandise_limits() -> Dict[str, int]:
-        """加载食材限购数据"""
-        path = os.path.join(
-            os.getcwd(),
-            "custom_task_config", "restaurant", "ingredients.json",
-        )
-        with open(path, "r", encoding="UTF-8") as f:
-            data = json.load(f)
-        return {
-            name: int(param["shop_daily_limit"])
-            for name, param in data.items()
-        }
+        return [item.identifier for item in filtered_items], sold_out_ingredients
 
     @staticmethod
     def _define_tasks(context: Context):
@@ -339,7 +357,7 @@ class ShopScan(CustomRecognition):
                     "param": {
                         "roi": SHOP_ROI,
                         "expected": r"^[\u4e00-\u9fa5]+$",
-                        "replace": [["售馨", "售罄"], ["7", "/"]]  # 所有限购数中均不包含7，因此所有的7均由/误识别得到
+                        "replace": [["售馨", "售罄"]]
                     },
                 },
                 "on_error": ["空白任务"]
@@ -368,6 +386,7 @@ class ShopPurchase(CustomAction):
         params = json.loads(argv.custom_action_param)
         demands_dict: Dict[str, int] = params["demands"]
         option: Literal["buy_all", "buy_missing"] = params["option"]
+
         if option == "buy_all":  # 根据模式确定购买列表
             pending: List[str] = list(demands_dict.keys())
         else:
