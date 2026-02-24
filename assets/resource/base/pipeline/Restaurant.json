@@ -230,7 +230,29 @@
                 ]
             }
         },
-        "action": "Click"
+        "action": "Click",
+        "post_wait_freezes":1000,
+        "next":[
+            "检查今日菜单界面",
+            "进入今日菜单"
+        ]
+    },
+    "检查今日菜单界面": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    308,
+                    607,
+                    181,
+                    85
+                ],
+                "expected": [
+                    "今日菜单"
+                ]
+            }
+        }
     },
     "餐厅商店_点击最大": {
         "recognition": {

@@ -3,7 +3,7 @@
         "next": [
             "领取委托奖励",
             "观测站_探索中",
-            "[JumpBack]派遣进程",
+            "派遣进程",
             "[JumpBack]本周探索已开启",
             "[JumpBack]进入弥弥观测站",
             "[JumpBack]进入进入弥弥观测站前置页面",
@@ -189,7 +189,9 @@
         "pre_delay": 500,
         "action": "Click",
         "post_delay":5000,
-        "next":["领取演算奖励"]
+        "next":[
+            "领取演算奖励"
+        ]
     },
     "领取演算奖励": {
         "recognition": {

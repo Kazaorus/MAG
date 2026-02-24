@@ -117,7 +117,7 @@
             "体力耗尽",
             "[JumpBack]确认扫荡"
         ],
-        "post_wait_freezes": 1000
+        "post_wait_freezes": 3000
     },
     "确认扫荡": {
         "recognition": {
@@ -156,7 +156,7 @@
         "next": [
             "调至最小扫荡次数",
             "[JumpBack]玩家等级提升",
-            "[JumpBack]扫荡完成"
+            "扫荡完成"
         ]
     },
     "调至最小扫荡次数": {
