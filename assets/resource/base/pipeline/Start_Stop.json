@@ -2,10 +2,12 @@
   "启动": {
     "next": [
       "检查主界面_启动1",
+      "[JumpBack]关闭主页剧情提示",
       "[JumpBack]关闭奖励通知",
       "[JumpBack]关闭皮肤购买界面",
       "[JumpBack]关闭签到界面",
       "[JumpBack]进入游戏",
+      "[JumpBack]服务器选择",
       "[JumpBack]启动游戏"
     ]
   },
@@ -25,6 +27,7 @@
     "post_delay": 10000,
     "next": [
       "检查主界面_启动2",
+      "[JumpBack]关闭主页剧情提示",
       "[JumpBack]关闭奖励通知",
       "[JumpBack]关闭皮肤购买界面",
       "[JumpBack]关闭签到界面",
@@ -48,12 +51,26 @@
     "post_delay": 10000,
     "next": [
       "检查主界面",
+      "[JumpBack]关闭主页剧情提示",
       "[JumpBack]关闭奖励通知",
       "[JumpBack]关闭皮肤购买界面",
       "[JumpBack]关闭签到界面",
       "[JumpBack]进入游戏",
       "[JumpBack]启动游戏"
     ]
+  },
+  "关闭主页剧情提示":{
+    "recognition":{
+      "type":"OCR",
+      "param":{
+        "roi":[288, 187, 695, 354],
+        "expected": [
+          "稍后再说"
+        ]
+      }
+    },
+    "action":"Click",
+    "post_wait_freezes": 1000
   },
   "关闭皮肤购买界面": {
     "recognition": {
@@ -123,6 +140,16 @@
     },
     "action": "Click",
     "post_delay": 10000
+  },
+  "服务器选择":{
+    "recognition":{
+      "type":"OCR",
+      "param":{
+        "roi": [566, 275, 146, 172],
+        "expected": "_"
+      }
+    },
+    "action": "Click"
   },
   "启动游戏": {
     "action": {

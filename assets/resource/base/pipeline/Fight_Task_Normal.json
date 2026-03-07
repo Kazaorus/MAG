@@ -152,7 +152,7 @@
             }
         },
         "action": "Click",
-        "post_wait_freezes": 1000,
+        "post_wait_freezes": 3000,
         "next": [
             "调至最小扫荡次数",
             "[JumpBack]玩家等级提升",

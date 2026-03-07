@@ -26,7 +26,7 @@
             }
         },
         "next": [
-            "直接返回主菜单"
+            "堆栈递归"
         ]
     },
     "本周探索已开启":{
@@ -148,26 +148,26 @@
         "action": "Click",
         "post_delay": 2000,
         "next": [
-            "堆栈递归",
-            "直接返回主菜单"
+            "堆栈递归"
         ]
     },
     "堆栈递归": {
-        "recognition": {
-            "type":"Custom",
-            "param":{
-                "custom_recognition": "ExplorationCumulativeRewardsDetermination",
-                "custom_recognition_param": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "BountyClaim",
+                "custom_action_param": {
                     "fixed_reward_collection": false,
                     "claimable_date": 5,
                     "claimable_time": "05:00:00"
                 }
             }
-        },
-        "action": "Click",
-        "post_wait_freezes": 3000,
-        "next": [
-            "开启演算"
+        }
+    },
+    "演算可用判定":{
+        "next":[
+            "开启演算",
+            "演算已关闭"
         ]
     },
     "开启演算": {
@@ -181,8 +181,7 @@
                     159
                 ],
                 "expected": [
-                    "开启",
-                    "演算"
+                    "开启"
                 ]
             }
         },
@@ -191,6 +190,26 @@
         "post_delay":5000,
         "next":[
             "领取演算奖励"
+        ]
+    },
+    "演算已关闭": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    848,
+                    283,
+                    183,
+                    159
+                ],
+                "expected": [
+                    "已关闭"
+                ]
+            }
+        },
+        "next":[
+            "直接返回主菜单",
+            "[JumpBack]点击下方空白"
         ]
     },
     "领取演算奖励": {

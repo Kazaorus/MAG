@@ -44,9 +44,9 @@
         "class": "ScreenShot",
         "file_path": "{custom_path}/action/ScreenShot.py"
     },
-    "ExplorationCumulativeRewardsDetermination": {
-        "type": "recognition",
-        "class": "ExplorationCumulativeRewardsDetermination",
-        "file_path": "{custom_path}/recognition/ExplorationCumulativeRewardsDetermination.py"
+    "BountyClaim": {
+        "type": "action",
+        "class": "BountyClaim",
+        "file_path": "{custom_path}/action/CumulativeRewards.py"
     }
 }

@@ -86,7 +86,8 @@
         "post_wait_freezes":2000,
         "next":[
             "领取阶段奖励",
-            "[JumpBack]关闭奖励通知"
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]点击下方空白"
         ]
     },
     "领取阶段奖励":{
