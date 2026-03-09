@@ -8,7 +8,7 @@ import math
 
 
 # ── 基本参数 ──────────────────────────────────────────────
-DEFAULT_OPERATION_TIME = 26 * 60
+DEFAULT_OPERATION_TIME = 30 * 60
 
 
 class PurchaseStrategy(Enum):
@@ -257,7 +257,7 @@ class RestaurantOptimizer:
                 break
 
             # 菜品2在剩余食材下的最大数量
-            count2 = self._calc_max_count(dish2, available)
+            count2 = self._calc_max_count(dish2, remaining)
             profit = count1 * dish1.price + count2 * dish2.price
             if profit > best_profit:
                 best_profit = profit
