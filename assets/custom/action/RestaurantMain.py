@@ -1,6 +1,6 @@
 from maa.context import Context
 from maa.custom_action import CustomAction
-from maa.define import Rect, RecognitionDetail
+from maa.define import Rect
 from typing import Dict, Any, Optional
 import numpy as np
 import time
@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 current_file = Path(__file__).resolve()
 sys.path.append(str(current_file.parent.parent.parent))
-from custom.action.RestaurantOptimization import RestaurantOptimizer, PurchaseStrategy, OptimizationResult
+from custom.action.RestaurantDecider.RestaurantDecider import RestaurantOptimizer, DecisionResult, PurchaseStrategy
 
 
 # ── 常量 ──────────────────────────────────────────────────
@@ -31,6 +31,7 @@ MENU_SWIPE_END: list = [480, 136, 0, 0]
 ADD_DISH_ROI: list = [718, 574, 152, 68]
 
 MAX_DISH_SEARCH_ATTEMPTS: int = 3
+DEFAULT_SELLING_TIME: float = 32.0
 
 # 前端参数名到内部枚举的映射
 STRATEGY_MAPPING: Dict[str, PurchaseStrategy] = {
@@ -50,51 +51,41 @@ class RestaurantMainProcess(CustomAction):
     def run(
             self, context: Context, argv: CustomAction.RunArg
     ) -> CustomAction.RunResult | bool:
+        '''初始化'''
+        params = json.loads(argv.custom_action_param)
         config_path = os.path.join(
-            os.getcwd(), "custom_task_config", "restaurant"
+            Path(__file__).resolve().parent.parent.parent,
+            "custom_task_config", "restaurant"
         )
         self._define_tasks(context)
 
-        '''参数解析'''
-        params = json.loads(argv.custom_action_param)
-        strategy = STRATEGY_MAPPING.get(
-            params.get("ingredients_purchase_option", "OnlyBuyDemand"),
-            PurchaseStrategy.BUY_MISSING
-        )
-        selling_time = self._parse_selling_time(
-            params.get("estimated_selling_time", None)
-        )
-
         '''扫描仓库与商店'''
         warehouse_storage = self._scan_storage(context, "warehouse_scan")
-        if strategy != PurchaseStrategy.NO_PURCHASE:
+        if params.get("ingredients_purchase_option", "OnlyBuyDemand") != "DoNotBuy":
             shop_storage = self._scan_storage(context, "shop_scan")
         else:
             shop_storage = {}
 
         '''优化求解'''
         optimizer = RestaurantOptimizer(
-            data_path=config_path,
+            json_dish=self._load_str_dishes(config_path),
+            json_player_status=self._load_str_player_status(config_path),
             warehouse_storage=warehouse_storage,
             shop_storage=shop_storage,
-            time_limit=selling_time,
-            strategy=strategy
+            time_limit=float(params.get("estimated_selling_time", DEFAULT_SELLING_TIME)),
+            strategy=params.get("ingredients_purchase_option", "OnlyBuyDemand"),
+            purchase_threshold=int(params.get("purchase_threshold", 0)),
         )
         result = optimizer.find_best_solution()
-        self._push_message(
-            context,
-            f"方案：{result.solutions}\n"
-            f"预期收益：{result.total_profit}\n"
-            f"购买计划：{result.purchase_plan}\n"
-            f"策略：{strategy.value}"
-        )
+        self._push_message(context, str(result))
+
         if not result.solutions:
             self._push_message(context, "未得出上架计划，跳过任务")
             context.run_task("直接返回主菜单")
             return CustomAction.RunResult(success=True)
 
         '''执行操作'''
-        self._execute_purchase(context, result, strategy)
+        self._execute_purchase(context, result)
         self._execute_serving(context, result)
 
         '''返回主页'''
@@ -117,21 +108,20 @@ class RestaurantMainProcess(CustomAction):
     @staticmethod
     def _execute_purchase(
             context: Context,
-            result: OptimizationResult,
-            strategy: PurchaseStrategy,
+            result: DecisionResult
     ):
         """菜品购买流程"""
-        if strategy == PurchaseStrategy.NO_PURCHASE:
+        if result.strategy == PurchaseStrategy.NO_PURCHASE:
             return
         if not result.purchase_plan:
             return
 
         # BUY_ALL: 购买计划中所有食材都要买
         # BUY_MISSING: 购买计划中只包含确实缺少的食材
-        if strategy == PurchaseStrategy.BUY_ALL:
-            option: str = PurchaseStrategy.BUY_ALL.value
+        if result.strategy == PurchaseStrategy.BUY_ALL:
+            option: int = PurchaseStrategy.BUY_ALL.value
         else:
-            option: str = PurchaseStrategy.BUY_MISSING.value
+            option: int = PurchaseStrategy.BUY_MISSING.value
 
         context.run_task("shop_purchase", {
             "shop_purchase": {
@@ -149,7 +139,7 @@ class RestaurantMainProcess(CustomAction):
             }
         })
 
-    def _execute_serving(self, context: Context, result: OptimizationResult):
+    def _execute_serving(self, context: Context, result: DecisionResult):
         """执行菜品上架流程"""
         context.run_task("进入今日菜单")
         context.run_task("下架菜品任务")
@@ -320,3 +310,23 @@ class RestaurantMainProcess(CustomAction):
                 "post_wait_freeze": 2000
             }
         })
+
+    @staticmethod
+    def _load_str_dishes(config_path: str) -> str:
+        with open(
+                os.path.join(
+                    config_path,
+                    "dishes.json"
+                ),"r", encoding="utf-8"
+        ) as f:
+            return f.read()
+
+    @staticmethod
+    def _load_str_player_status(config_path: str) -> str:
+        with open(
+                os.path.join(
+                    config_path,
+                    "player_status.json"
+                ),"r", encoding="utf-8"
+        ) as f:
+            return f.read()

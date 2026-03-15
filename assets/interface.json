@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.3.6",
+    "version": "1.4.0",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",
@@ -1772,7 +1772,7 @@
                 {
                     "name": "运营时间",
                     "description": "<p>输入运营时间，单位为小时，支持小数</p><p>由于计算取整，实际时间会有一定偏差，建议填入时间至少要比期望售卖时间多5%</p>",
-                    "default": "30",
+                    "default": "32",
                     "pipeline_type": "string",
                     "verify": "^\\d+(\\.\\d+)?$",
                     "pattern_msg": "输入非法，请重新输入"
@@ -1822,7 +1822,10 @@
                                 }
                             }
                         }
-                    }
+                    },
+                    "option": [
+                        "购买阈值"
+                    ]
                 },
                 {
                     "name": "不购买食材",
@@ -1840,6 +1843,32 @@
                     }
                 }
             ]
+        },
+        "购买阈值": {
+            "label": "购买阈值",
+            "type": "input",
+            "inputs": [
+                {
+                    "name": "购买阈值",
+                    "description": "<p>仓库储量低于该值的食材会加入购买计划</p><p>仅支持非负整数</p>",
+                    "default": "500",
+                    "pipeline_type": "string",
+                    "verify": "^(0|[1-9]\\d*)$",
+                    "pattern_msg": "仅支持非负整数"
+                }
+            ],
+            "pipeline_override": {
+                "餐厅主要任务":{
+                    "action": {
+                        "type": "Custom",
+                        "param": {
+                            "custom_action_param": {
+                                "purchase_threshold": "{购买阈值}"
+                            }
+                        }
+                    }
+                }
+            }
         },
         "奖励类型": {
             "cases": [

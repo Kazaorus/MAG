@@ -32,7 +32,11 @@
             "type": "Custom",
             "param": {
                 "custom_action": "RestaurantMainProcess",
-                "custom_action_param": "custom_task_config\\restaurant"
+                "custom_action_param": {
+                    "estimated_selling_time": 32,
+                    "ingredients_purchase_option": "OnlyBuyDemand",
+                    "purchase_threshold": 500
+                }
             }
         }
     },

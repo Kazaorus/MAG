@@ -8,6 +8,14 @@ import json
 import os
 
 
+# 由于MFW前端的缺陷，在导入自定义模块时需要使用sys将MFW.exe所在目录加入sys.path，并从该路径导入模块
+# 以下导入路径仅适用打包后的代码，若IDE报错请无视，经实际测试可以正常运行
+from pathlib import Path
+import sys
+current_file = Path(__file__).resolve()
+sys.path.append(str(current_file.parent.parent.parent))
+from custom.action.RestaurantDecider.RestaurantDecider import PurchaseStrategy
+
 # ── 基本参数 ──────────────────────────────────────────────
 WAREHOUSE_ROI: List[int] = [303, 138, 391, 495]
 WAREHOUSE_SWIPE_BEGIN: List[int] = [473, 625, 0, 0]
@@ -376,7 +384,7 @@ class ShopPurchase(CustomAction):
     需要在 argv.custom_action_param 中传入 JSON:
     {
         "demands": {食材名: 需求数量, ...},
-        "option": "buy_all" | "buy_missing"
+        "option": PurchaseStrategy.value
     }
     """
 
@@ -385,9 +393,9 @@ class ShopPurchase(CustomAction):
     ) -> CustomAction.RunResult | bool:
         params = json.loads(argv.custom_action_param)
         demands_dict: Dict[str, int] = params["demands"]
-        option: Literal["buy_all", "buy_missing"] = params["option"]
+        option: int = params["option"]
 
-        if option == "buy_all":  # 根据模式确定购买列表
+        if option == PurchaseStrategy.BUY_ALL.value:  # 根据模式确定购买列表
             pending: List[str] = list(demands_dict.keys())
         else:
             pending: List[str] = [
