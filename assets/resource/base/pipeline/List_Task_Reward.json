@@ -38,7 +38,6 @@
             }
         },
         "post_wait_freezes": 1000,
-        "timeout": 10000,
         "on_error": [
                 "直接返回主菜单_2"
             ],
@@ -64,6 +63,7 @@
         },
         "action": "Click",
         "post_wait_freezes": 1000,
+        "timeout": 5000,
         "next": [
             "领取列表任务奖励"
         ],
