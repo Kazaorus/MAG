@@ -478,3 +478,7 @@ runtime
 .obsidian
 app/i18n/i18n.zh_HK.qm
 app/i18n/i18n.zh_CN.qm
+
+# Unfinished
+./assets/custom/action/RestaurantDecider/test/
+./assets/custom/action/RestaurantDecider/CMakeLists.txt

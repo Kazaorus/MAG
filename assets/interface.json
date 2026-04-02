@@ -101,7 +101,7 @@
             "name": "列表任务奖励",
             "entry": "列表任务奖励",
             "default_check": false,
-            "description": "<p>领取列表任务的奖励</p><p>主要包含联防协议任务列表的奖励，同时也会有部分临时任务包含其中</p><p>当前包含临时任务：</p><ul><li>弹趣乐礼</li></ul>",
+            "description": "<p>领取列表任务的奖励</p><p>主要包含联防协议任务列表的奖励，同时也会有部分临时任务包含其中</p><p>当前包含临时任务：</p><ul></ul>",
             "option":[
                 "列表任务类型"
             ]
@@ -177,7 +177,7 @@
             "name": "皮肤活动每日任务",
             "entry": "列表任务奖励",
             "default_check": false,
-            "description": "<p>对于部分有相关活动界面的皮肤，领取其中的每日奖励</p><p>速通周期:每天5点后刷新一次</p><p>当前活动皮肤：</p><ul><li>三相·梵天：无间玩伴</li></ul>",
+            "description": "<p>对于部分有相关活动界面的皮肤，领取其中的每日奖励</p><p>速通周期:每天5点后刷新一次</p><p>当前活动皮肤：</p><ul></ul>",
             "speedrun": {
                 "mode": "daily",
                 "trigger": {
@@ -1762,20 +1762,6 @@
                 {
                     "name": "联防协议",
                     "pipeline_override": {}
-                },
-                {
-                    "name": "弹趣乐礼",
-                    "pipeline_override": {
-                        "进入列表任务界面": {
-                            "recognition": {
-                                "param":{
-                                    "expected": [
-                                        "弹趣乐礼"
-                                    ]
-                                }
-                            }
-                        }
-                    }
                 },
                 {
                     "name": "*自行输入类型",
