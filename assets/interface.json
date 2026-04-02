@@ -803,6 +803,34 @@
                     "pipeline_override": {}
                 },
                 {
+                    "name": "天地无倪",
+                    "pipeline_override": {
+                        "选择刻印": {
+                            "action": {
+                                "param": {
+                                    "custom_action_param": {
+                                        "aim": "天地无倪"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "赤曜九霄",
+                    "pipeline_override": {
+                        "选择刻印": {
+                            "action": {
+                                "param": {
+                                    "custom_action_param": {
+                                        "aim": "赤曜九霄"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                {
                     "name": "天路曙开",
                     "pipeline_override": {
                         "选择刻印": {
