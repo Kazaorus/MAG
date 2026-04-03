@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from app.utils.logger import logger
 from app.common.constants import _RESOURCE_, _CONTROLLER_, POST_ACTION, PRE_CONFIGURATION
-from app.core.Item import ConfigItem, TaskItem, CoreSignalBus
+from app.core.item import ConfigItem, TaskItem, CoreSignalBus
 
 
 class JsonConfigRepository:
@@ -204,6 +204,8 @@ class ConfigService:
         
         # 向后兼容：检查并转换旧的 Pre-Configuration 任务
         self._migrate_pre_configuration_task(config)
+        # 向后兼容：将历史 Resource 任务中的全局选项迁移到配置根层
+        self._migrate_global_options_storage(config)
         
         return config
 
@@ -276,6 +278,18 @@ class ConfigService:
         """更新配置"""
         return self.save_config(config_id, config_data)
 
+    def get_current_global_options(self) -> Dict[str, Any]:
+        """获取当前配置的全局选项。"""
+        config = self.get_current_config()
+        global_options = getattr(config, "global_options", {}) or {}
+        return dict(global_options) if isinstance(global_options, dict) else {}
+
+    def update_current_global_options(self, global_options: Dict[str, Any]) -> bool:
+        """更新当前配置的全局选项。"""
+        config = self.get_current_config()
+        config.global_options = dict(global_options) if isinstance(global_options, dict) else {}
+        return self.update_config(config.item_id, config)
+
     def delete_config(self, config_id: str) -> bool:
         """删除配置（禁止删除最后一个配置）"""
         if self._main_config is None:
@@ -331,7 +345,7 @@ class ConfigService:
         """获取当前bundle"""
         # 使用当前配置中保存的 bundle 名称，在主配置中查找 bundle 详情
         current_config = self.get_current_config()
-        bundle_name = getattr(current_config, "bundle", "") or self.current_config_id
+        bundle_name = current_config.bundle
         return self.get_bundle(bundle_name)
 
     # ========== bundle 辅助方法 ==========
@@ -341,7 +355,7 @@ class ConfigService:
         if not config:
             return None
 
-        bundle_name = getattr(config, "bundle", "") or ""
+        bundle_name = config.bundle
         if not bundle_name:
             return None
 
@@ -362,53 +376,6 @@ class ConfigService:
             return "./"
         path = info.get("path") or "./"
         return str(path)
-
-    def get_timeout_restart_state(self) -> Dict[str, int]:
-        """获取超时重启状态（entry -> attempts 映射）"""
-        if self._main_config is None:
-            return {}
-        state = self._main_config.get("_timeout_restart_state")
-        if isinstance(state, dict):
-            return state.copy()
-        return {}
-
-    def save_timeout_restart_state(self, entry: str, attempts: int) -> bool:
-        """保存超时重启状态"""
-        if self._main_config is None:
-            logger.warning("保存超时重启状态失败: _main_config 为 None")
-            return False
-        if "_timeout_restart_state" not in self._main_config:
-            self._main_config["_timeout_restart_state"] = {}
-        if attempts > 0:
-            self._main_config["_timeout_restart_state"][entry] = attempts
-            logger.debug(f"保存超时重启状态到配置: entry={entry}, attempts={attempts}")
-        else:
-            # 如果次数为0或负数，清除该entry的状态
-            self._main_config["_timeout_restart_state"].pop(entry, None)
-            logger.debug(f"清除超时重启状态: entry={entry}")
-        result = self.save_main_config()
-        if result:
-            logger.debug(
-                f"配置保存成功，当前状态: {self._main_config.get('_timeout_restart_state', {})}"
-            )
-        else:
-            logger.warning("保存主配置失败")
-        return result
-
-    def clear_timeout_restart_state(self, entry: str | None = None) -> bool:
-        """清除超时重启状态
-        Args:
-            entry: 如果提供，只清除该entry的状态；否则清除所有状态
-        """
-        if self._main_config is None:
-            return False
-        if "_timeout_restart_state" not in self._main_config:
-            return True
-        if entry is not None:
-            self._main_config["_timeout_restart_state"].pop(entry, None)
-        else:
-            self._main_config["_timeout_restart_state"] = {}
-        return self.save_main_config()
 
     def _migrate_pre_configuration_task(self, config: ConfigItem) -> bool:
         """
@@ -516,3 +483,47 @@ class ConfigService:
         else:
             logger.warning(f"配置迁移完成但保存失败")
             return False
+
+    def _migrate_global_options_storage(self, config: ConfigItem) -> bool:
+        """将历史上保存在 Resource 任务中的全局选项迁移到配置根层。"""
+        global_option_names = {
+            name for name in self.repo.interface.get("global_option", []) if isinstance(name, str) and name
+        }
+
+        resource_task = next((task for task in config.tasks if task.item_id == _RESOURCE_), None)
+        if resource_task is None or not isinstance(resource_task.task_option, dict):
+            return False
+
+        task_option = resource_task.task_option
+        current_global_options = getattr(config, "global_options", {})
+        if not isinstance(current_global_options, dict):
+            current_global_options = {}
+
+        changed = False
+
+        legacy_nested_global_options = task_option.get("global_options")
+        if isinstance(legacy_nested_global_options, dict):
+            for key, value in legacy_nested_global_options.items():
+                if key not in current_global_options:
+                    current_global_options[key] = value
+                    changed = True
+            if "global_options" in task_option:
+                del task_option["global_options"]
+                changed = True
+
+        for option_name in global_option_names:
+            if option_name not in task_option:
+                continue
+            if option_name not in current_global_options:
+                current_global_options[option_name] = task_option[option_name]
+            del task_option[option_name]
+            changed = True
+
+        if changed:
+            config.global_options = current_global_options
+            if self.save_config(config.item_id, config):
+                logger.info("已将 Resource 任务中的全局选项迁移到配置根层")
+                return True
+            logger.warning("全局选项迁移完成但保存失败")
+
+        return changed

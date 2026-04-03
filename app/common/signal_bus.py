@@ -35,6 +35,7 @@ class SignalBus(QObject):
     show_option = Signal(dict)  # 显示选项
     agent_info = Signal(dict)  # 智能体信息
     title_changed = Signal()  # 窗口标题改变
+    set_window_title = Signal(str)  # 直接设置窗口标题字符串
     # maa sink 发送信号
     callback = Signal(dict)
 
@@ -45,6 +46,12 @@ class SignalBus(QObject):
 
     # 显示 InfoBar 的请求
     info_bar_requested = Signal(str, str)  # (level, message)
+
+    # focus display 渠道信号
+    focus_toast = Signal(str)  # 应用内轻提示（message）
+    focus_notification = Signal(str)  # 系统级通知（message）
+    focus_dialog = Signal(str)  # 非阻塞式对话框（message）
+    focus_modal = Signal(str)  # 阻塞式弹窗（message）
     log_zip_started = Signal()  # 日志打包开始
     log_zip_finished = Signal()  # 日志打包结束
 
@@ -78,6 +85,10 @@ class SignalBus(QObject):
 
     # 任务状态信号
     task_status_changed = Signal(str, str)  # (task_id, status) status: "running", "completed", "failed", "restart_success", "waiting"
+
+    # 任务流结束信号：无论正常结束/异常/手动停止/中止，都会在任务流退出时发射
+    # payload: dict（包含原因/标志位等，字段可扩展）
+    task_flow_finished = Signal(dict)
 
 
 signalBus = SignalBus()

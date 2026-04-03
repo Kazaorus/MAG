@@ -1,0 +1,4 @@
+@echo off
+copy /y "interface.json" "..\debug\"
+echo "completed!"
+pause

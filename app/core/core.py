@@ -7,16 +7,16 @@ import jsonc
 
 from PySide6.QtCore import QTimer
 
-from app.core.Item import (
+from app.core.item import (
     CoreSignalBus,
     FromeServiceCoordinator,
     ConfigItem,
     TaskItem,
 )
-from app.core.service.Config_Service import ConfigService, JsonConfigRepository
-from app.core.service.Schedule_Service import ScheduleService
-from app.core.service.Task_Service import TaskService
-from app.core.service.Option_Service import OptionService
+from app.core.service.config_service import ConfigService, JsonConfigRepository
+from app.core.service.schedule_service import ScheduleService
+from app.core.service.task_service import TaskService
+from app.core.service.option_service import OptionService
 from app.core.service.interface_manager import get_interface_manager, InterfaceManager
 from app.core.runner.task_flow import TaskFlowRunner
 from app.core.log_processor import CallbackLogProcessor
@@ -39,6 +39,7 @@ class ServiceCoordinator:
         
         # 存储待显示的错误信息（用于在 UI 初始化完成后显示）
         self._pending_error_message: tuple[str, str] | None = None
+        self._main_config_path = main_config_path
 
         # 根据传入参数或主配置中的 bundle.path 解析 interface 路径
         self._interface_path = self._resolve_interface_path(
@@ -104,6 +105,8 @@ class ServiceCoordinator:
 
         # 在主要内容初始化完毕后，清理无效的 bundle 索引（不删除配置）
         self._cleanup_invalid_bundles()
+
+        logger.info(f"资源版本: {self._interface.get('version', 'unknown')}")
 
     def _resolve_interface_path(
         self, main_config_path: Path, interface_path: Path | str | None
@@ -210,7 +213,19 @@ class ServiceCoordinator:
             return None
 
         try:
-            bundle_info = self.config_service.get_bundle(bundle_name)
+            bundle_info = None
+            if hasattr(self, "config_service") and self.config_service:
+                bundle_info = self.config_service.get_bundle(bundle_name)
+            else:
+                bundle_path_str = self._get_bundle_path_from_main_config(
+                    bundle_name
+                )
+                if not bundle_path_str:
+                    logger.warning(
+                        f"未在主配置中找到 bundle: {bundle_name}"
+                    )
+                    return None
+                bundle_info = {"path": bundle_path_str}
         except FileNotFoundError:
             logger.warning(f"未在主配置中找到 bundle: {bundle_name}")
             return None
@@ -235,6 +250,32 @@ class ServiceCoordinator:
             return None
 
         return candidate
+
+    def _get_bundle_path_from_main_config(self, bundle_name: str) -> str | None:
+        """在 config_service 可用前，从 multi_config.json 中查找 bundle 的 path。"""
+        try:
+            main_config_path = self._main_config_path
+        except AttributeError as exc:
+            logger.error("ServiceCoordinator 缺少 _main_config_path，无法从主配置解析 bundle 路径")
+            raise
+        if not main_config_path or not main_config_path.exists():
+            return None
+
+        try:
+            with open(main_config_path, "r", encoding="utf-8") as mf:
+                main_cfg: Dict[str, Any] = jsonc.load(mf)
+        except Exception:
+            return None
+
+        bundle_dict = main_cfg.get("bundle") or {}
+        if not isinstance(bundle_dict, dict):
+            return None
+
+        bundle_info = bundle_dict.get(bundle_name)
+        if isinstance(bundle_info, dict):
+            return bundle_info.get("path")
+
+        return None
 
     def _handle_config_load_error(
         self, main_config_path: Path, configs_dir: Path, error: Exception
@@ -447,7 +488,11 @@ class ServiceCoordinator:
         if not invalid_bundles:
             return
 
-        main_cfg = getattr(self.config_service, "_main_config", None)
+        try:
+            main_cfg = self.config_service._main_config
+        except AttributeError as exc:
+            logger.error("ConfigService 缺少 _main_config，无法清理无效 bundle 索引")
+            raise
         if not isinstance(main_cfg, dict):
             logger.warning("主配置结构缺失或损坏，跳过无效 bundle 清理")
             return
@@ -477,11 +522,18 @@ class ServiceCoordinator:
             return
 
         config = self.config_service.get_config(config_id)
-        if not config or not getattr(config, "bundle", None):
+        if not config:
+            return
+        try:
+            bundle_name = config.bundle
+        except AttributeError as exc:
+            logger.error(f"配置 {config_id} 缺少 bundle 字段，无法更新 interface 路径")
+            raise
+        if not bundle_name:
             return
 
         # 根据配置的 bundle 名称解析新的 interface 路径
-        new_interface_path = self._resolve_interface_path_from_bundle(config.bundle)
+        new_interface_path = self._resolve_interface_path_from_bundle(bundle_name)
 
         # 如果路径发生变化，需要重新加载 interface
         if new_interface_path and new_interface_path != self._interface_path:
@@ -595,8 +647,54 @@ class ServiceCoordinator:
             logger.error(f"更新 bundle 路径失败: {e}")
             return False
 
-    def add_config(self, config_item: ConfigItem) -> str:
-        """添加配置，传入 ConfigItem 对象，返回新配置ID"""
+    def delete_bundle(self, bundle_name: str) -> bool:
+        """从主配置中移除指定 bundle 的索引"""
+        try:
+            main_config = self.config_service._main_config
+        except AttributeError as exc:
+            logger.error("ConfigService 缺少 _main_config，无法删除 bundle")
+            raise
+        if not isinstance(main_config, dict):
+            logger.warning("主配置缺失，无法删除 bundle")
+            return False
+
+        bundle_dict = main_config.get("bundle")
+        if not isinstance(bundle_dict, dict):
+            bundle_dict = {}
+
+        if bundle_name not in bundle_dict:
+            logger.info(f"Bundle '{bundle_name}' 不存在于主配置，跳过删除")
+            return True
+
+        bundle_dict.pop(bundle_name, None)
+        main_config["bundle"] = bundle_dict
+        success = self.config_service.save_main_config()
+        if success:
+            logger.info(f"已从主配置中移除 bundle: {bundle_name}")
+            return True
+
+        logger.error(f"保存主配置失败，bundle '{bundle_name}' 未被删除")
+        return False
+
+    def get_presets(self) -> List[Dict[str, Any]]:
+        """获取 interface 中定义的所有预设配置列表。
+
+        Returns:
+            预设列表，每个元素是一个预设字典（含 name, label, description, icon, task 等字段）。
+            如果没有预设则返回空列表。
+        """
+        presets = self._interface.get("preset", [])
+        if not isinstance(presets, list):
+            return []
+        return presets
+
+    def add_config(self, config_item: ConfigItem, preset_name: str | None = None) -> str:
+        """添加配置，传入 ConfigItem 对象，返回新配置ID
+
+        Args:
+            config_item: 配置项对象
+            preset_name: 可选的预设名称。如果指定，则在初始化任务后应用预设的勾选状态和选项值。
+        """
         new_id = self.config_service.create_config(config_item)
         if new_id:
             # Select the new config
@@ -605,11 +703,32 @@ class ServiceCoordinator:
             # Initialize the new config with tasks from interface
             self.task_service.init_new_config()
 
+            # Apply preset if specified
+            if preset_name:
+                preset = self._find_preset(preset_name)
+                if preset:
+                    self.task_service.apply_preset(preset)
+
             # Notify UI incrementally
             self.fs_signal_bus.fs_config_added.emit(
                 self.config_service.get_config(new_id)
             )
         return new_id
+
+    def _find_preset(self, preset_name: str) -> Dict[str, Any] | None:
+        """根据预设名称查找预设配置。
+
+        Args:
+            preset_name: 预设的 name 字段值
+
+        Returns:
+            匹配的预设字典，未找到返回 None
+        """
+        presets = self.get_presets()
+        for preset in presets:
+            if isinstance(preset, dict) and preset.get("name") == preset_name:
+                return preset
+        return None
 
     def delete_config(self, config_id: str) -> bool:
         """删除配置，传入 config id"""
@@ -751,6 +870,11 @@ class ServiceCoordinator:
 
         :param task_id: 指定只运行某个任务（可选）
         """
+        # 任务流执行前刷新一次 is_hidden，确保 runner 只需读取 is_checked/is_hidden
+        try:
+            self.task_service.refresh_hidden_flags()
+        except Exception:
+            pass
         return await self.task_runner.run_tasks_flow(task_id)
 
     async def stop_task_flow(self):
@@ -774,6 +898,11 @@ class ServiceCoordinator:
     def interface(self) -> Dict[str, Any]:
         """返回当前加载的 interface 字典"""
         return self._interface
+
+    @property
+    def interface_path(self) -> Path | str | None:
+        """返回当前生效的 interface 文件路径。"""
+        return self._interface_path
 
     @property
     def config(self) -> ConfigService:

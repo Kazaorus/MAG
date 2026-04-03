@@ -1,0 +1,452 @@
+{
+    "餐厅任务": {
+        "next": [
+            "餐厅界面检测_主线",
+            "[JumpBack]进入餐厅",
+            "[JumpBack]进入游园街导航",
+            "[JumpBack]进入游园街_餐厅",
+            "[JumpBack]关闭待机页面"
+        ]
+    },
+    "餐厅界面检测_主线": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    308,
+                    607,
+                    181,
+                    85
+                ],
+                "expected": [
+                    "今日菜单"
+                ]
+            }
+        },
+        "next": [
+            "餐厅主要任务"
+        ]
+    },
+    "餐厅主要任务": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "RestaurantMainProcess",
+                "custom_action_param": {
+                    "estimated_selling_time": 32,
+                    "ingredients_purchase_option": "OnlyBuyDemand",
+                    "purchase_threshold": 500
+                }
+            }
+        }
+    },
+    "进入游园街_餐厅": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    965,
+                    625,
+                    86,
+                    78
+                ],
+                "expected": [
+                    "游园街"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 2000
+    },
+    "进入餐厅": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    236,
+                    382,
+                    196,
+                    102
+                ],
+                "expected": [
+                    "餐厅",
+                    "厅"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 2000
+    },
+    "进入游园街导航": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    40,
+                    617,
+                    188,
+                    98
+                ],
+                "expected": [
+                    "导航"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 2000
+    },
+    "餐厅界面检测_通用": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    308,
+                    607,
+                    181,
+                    85
+                ],
+                "expected": [
+                    "今日菜单"
+                ]
+            }
+        }
+    },
+    "领取餐厅收益": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    222,
+                    334,
+                    222,
+                    79
+                ],
+                "expected": [
+                    "^可领取$"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "进入餐厅商店": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1132,
+                    161,
+                    83,
+                    336
+                ],
+                "expected": [
+                    "商店"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 2000
+    },
+    "进入餐厅仓库": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1132,
+                    161,
+                    83,
+                    336
+                ],
+                "expected": [
+                    "仓库"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 2000
+    },
+    "进入餐厅委托界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1132,
+                    161,
+                    83,
+                    336
+                ],
+                "expected": [
+                    "委托"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "领取餐厅委托奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    566,
+                    624,
+                    147,
+                    73
+                ],
+                "expected": [
+                    "确定"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000
+    },
+    "派遣餐厅委托": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1095,
+                    633,
+                    117,
+                    66
+                ],
+                "expected": [
+                    "一键派遣",
+                    "派遣",
+                    "派"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000
+    },
+    "进入今日菜单": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    308,
+                    607,
+                    181,
+                    85
+                ],
+                "expected": [
+                    "今日菜单"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes":1000,
+        "next":[
+            "检查今日菜单界面",
+            "进入今日菜单"
+        ]
+    },
+    "检查今日菜单界面": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    308,
+                    607,
+                    181,
+                    85
+                ],
+                "expected": [
+                    "今日菜单"
+                ]
+            }
+        }
+    },
+    "餐厅商店_点击最大": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    810,
+                    476,
+                    229,
+                    54
+                ],
+                "expected": [
+                    "最大",
+                    "大"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 500
+    },
+    "餐厅商店_点击购买": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    810,
+                    476,
+                    229,
+                    54
+                ],
+                "expected": [
+                    "购买",
+                    "买"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 3000
+    },
+    "下架菜品任务": {
+        "next": [
+            "下架完毕",
+            "[JumpBack]下架菜品",
+            "[JumpBack]进入今日菜单"
+        ]
+    },
+    "下架完毕": {
+        "inverse": true,
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    932,
+                    160,
+                    230,
+                    498
+                ],
+                "expected": [
+                    "下架"
+                ]
+            }
+        }
+    },
+    "下架菜品": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    932,
+                    160,
+                    230,
+                    498
+                ],
+                "expected": [
+                    "下架"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 2000,
+        "next": [
+            "确认下架菜品",
+            "下架菜品任务"
+        ]
+    },
+    "确认下架菜品": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    810,
+                    518,
+                    163,
+                    87
+                ],
+                "expected": [
+                    "确定"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "下架菜品任务"
+        ]
+    },
+
+
+    "gain_warehouse_category": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [303, 138, 391, 495],
+                "expected": "^([\u4e00-\u9fa5]+)|((?:\\d+\\.?\\d*)[kKmMbB]?)$"
+            }
+        },
+        "on_error": ["空白任务"]
+    },
+    "warehouse_page_turning": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [473, 625],
+                "end": [473, 160],
+                "duration": 2000,
+                "end_hold": 1000
+            }
+        },
+        "post_delay": 500
+    },
+
+    "gain_shop_category": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [284, 93, 958, 606],
+                "expected": "^[\u4e00-\u9fa5]+$",
+                "replace": [["售馨", "售罄"]]
+            }
+        },
+        "on_error": ["空白任务"]
+    },
+    "shop_page_turning": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [759, 605],
+                "end": [759, 93],
+                "duration": 2000
+            }
+        },
+        "post_delay": 500
+    },
+
+    "shop_scan": {
+        "recognition": {
+            "type": "Custom",
+            "param": {
+                "custom_recognition": "ShopScan"
+            }
+        }
+    },
+    "warehouse_scan": {
+        "recognition": {
+            "type": "Custom",
+            "param": {
+                "custom_recognition": "WarehouseScan"
+            }
+        }
+    },
+    "menu_page_turning": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [480, 623],
+                "end": [480, 136],
+                "duration": 2000,
+                "end_hold": 1000
+            }
+        }
+    },
+    "add_dish": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [718, 574, 152, 68],
+                "expected": ["上架"]
+            }
+        },
+        "action": "Click",
+        "post_wait_freeze": 2000
+    }
+}

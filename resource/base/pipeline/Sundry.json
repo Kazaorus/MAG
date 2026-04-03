@@ -1,0 +1,46 @@
+{
+    "cumulative_reward": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [1098, 569, 129, 106],
+                "expected": ["10"]
+            }
+        },
+        "timeout": 5000,
+        "on_error": ["空白任务"]
+    },
+    "enter_reward_interface": {
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [1168, 645]
+            }
+        },
+        "post_wait_freezes": 1000
+    },
+
+    "cannot_sweep": {
+        "timeout": 3000,
+        "recognition": {
+            "type": "ColorMatch",
+            "param": {
+                "roi": [905, 645, 179, 53],
+                "lower": [120, 120, 120],
+                "upper": [127, 127, 127],
+                "count": 10
+            }
+        },
+        "on_error": ["空白任务"]
+    },
+    "level_reco": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [10, 160, 1257, 479],
+                "index": -1,
+                "expected": ".*\\-\\d"
+            }
+        }
+    }
+}

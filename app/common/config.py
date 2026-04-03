@@ -64,7 +64,9 @@ class Language(Enum):
     """Language enumeration mapped to QLocale."""
 
     CHINESE_SIMPLIFIED = QLocale(QLocale.Language.Chinese, QLocale.Country.China)
+    # 繁体中文：港台澳统一为此项（界面仅「繁體中文」一项）
     CHINESE_TRADITIONAL = QLocale(QLocale.Language.Chinese, QLocale.Country.HongKong)
+    JAPANESE = QLocale(QLocale.Language.Japanese, QLocale.Country.Japan)
     ENGLISH = QLocale(QLocale.Language.English)
 
 
@@ -92,6 +94,8 @@ class Config(QConfig):
 
         def deserialize(self, value: str) -> Language:
             if isinstance(value, str):
+                if value == "CHINESE_TRADITIONAL_TW":
+                    return Language.CHINESE_TRADITIONAL
                 try:
                     return Language[value]
                 except KeyError:
@@ -123,6 +127,9 @@ class Config(QConfig):
     auto_minimize_on_startup = ConfigItem(
         "General", "auto_minimize_on_startup", False, BoolValidator()
     )
+    minimize_to_tray_on_minimize_windows = ConfigItem(
+        "General", "minimize_to_tray_on_minimize_windows", False, BoolValidator()
+    )
     run_after_startup_arg = ConfigItem(
         "General", "run_after_startup_arg", False, BoolValidator()
     )
@@ -132,8 +139,15 @@ class Config(QConfig):
     save_screenshot = ConfigItem(
         "Compatibility", "save_screenshot", False, BoolValidator()
     )
+    special_task_tutorial_shown = ConfigItem(
+        "General", "special_task_tutorial_shown", False, BoolValidator()
+    )
 
     announcement = ConfigItem("General", "announcement", "")
+
+    # ===== 运行时标记 =====
+    # 用于在 UI/逻辑层快速判断当前进程是否处于管理员权限（会在启动时刷新）
+    is_admin = ConfigItem("Runtime", "is_admin", False, BoolValidator())
 
     auto_update = ConfigItem(
         "Update", "auto_update", _AUTO_UPDATE_DEFAULT, BoolValidator()
@@ -155,6 +169,14 @@ class Config(QConfig):
     low_power_monitoring_mode = ConfigItem(
         "Task", "low_power_monitoring_mode", True, BoolValidator()
     )  # 低功耗监控模式：使用缓存的图像而不是专用监控线程
+
+    # ===== 日志设置 =====
+    log_zip_include_images = ConfigItem(
+        "Log", "log_zip_include_images", False, BoolValidator()
+    )  # 是否在日志压缩包中包含图片（默认关闭）
+    log_max_images = RangeConfigItem(
+        "Log", "log_max_images", 25, RangeValidator(1, 10000)
+    )  # 日志中保存的最大图片数量（默认25张，按200KB/张计算），同时控制界面显示和压缩包保存的数量
 
     # ===== 通知 =====
     Notice_DingTalk_status = ConfigItem("Notice", "DingTalk_status", False)
@@ -186,6 +208,11 @@ class Config(QConfig):
     Notice_QYWX_status = ConfigItem("Notice", "QYWX_status", False)
     Notice_QYWX_key = ConfigItem("Notice", "QYWX_key", "")
 
+    Notice_Gotify_status = ConfigItem("Notice", "Gotify_status", False)
+    Notice_Gotify_url = ConfigItem("Notice", "Gotify_url", "")
+    Notice_Gotify_token = ConfigItem("Notice", "Gotify_token", "")
+    Notice_Gotify_priority = ConfigItem("Notice", "Gotify_priority", "0")
+
     when_start_up = ConfigItem("Notice", "when_start_up", False)
     # 通知时机配置，分别控制不同场景下的通知发送
     when_flow_started = ConfigItem("Notice", "when_flow_started", False)  # 任务流启动时
@@ -200,6 +227,14 @@ class Config(QConfig):
     when_post_task = ConfigItem("Notice", "when_post_task", True)  # 任务流完成时
     when_task_timeout = ConfigItem("Notice", "when_task_timeout", True)  # 任务超时
     when_task_finished = ConfigItem("Notice", "when_task_finished", False)  # 保留兼容性
+    # 外部通知发送格式：plain=纯文本，html=HTML（如邮件正文）
+    notice_send_format = OptionsConfigItem(
+        "Notice", "notice_send_format", "plain", OptionsValidator(["plain", "html"])
+    )
+    # 是否随通知发送截图（任务流发送通知时若控制器可用则附带当前截图）
+    notice_send_screenshot = ConfigItem(
+        "Notice", "notice_send_screenshot", False, BoolValidator()
+    )
 
     # ===== 主窗口 =====
     micaEnabled = ConfigItem("MainWindow", "MicaEnabled", isWin11(), BoolValidator())
@@ -279,17 +314,20 @@ def detect_system_language() -> Language:
     language = system_locale.language()
     country = system_locale.country()
 
-    # 中文判断
+    # 中文判断（繁体：台港澳统一为 CHINESE_TRADITIONAL）
     if language == QLocale.Language.Chinese:
-        # 繁体
-        if country in (QLocale.Country.HongKong,):
+        if country in (
+            QLocale.Country.HongKong,
+            QLocale.Country.Macao,
+            QLocale.Country.Taiwan,
+        ):
             return Language.CHINESE_TRADITIONAL
-        # 简体
         return Language.CHINESE_SIMPLIFIED
 
-    # 其他语言默认英文
-    else:
-        return Language.ENGLISH
+    if language == QLocale.Language.Japanese:
+        return Language.JAPANESE
+
+    return Language.ENGLISH
 
 
 def init_language_on_first_run():

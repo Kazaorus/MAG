@@ -1,0 +1,74 @@
+{
+    "slide_to_top": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [453, 226],
+                "end": [453, 514],
+                "duration": 2000,
+                "end_hold": 1000
+            }
+        }
+    },
+    "slide_to_bottom": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [453, 461],
+                "end": [453, 165],
+                "duration": 2000,
+                "end_hold": 1000
+            }
+        }
+    },
+    "click_first_mark": {
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [272, 268]
+            }
+        }
+    },
+    "recognize_mark_name": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [712, 202, 164, 37],
+                "expected": "[\u4e00-\u9fa5]+"
+            }
+        }
+    },
+    "recognize_mark_template": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [204, 214, 495, 279],
+                "template": "刻印图标/得胜者的凯歌.png"
+            }
+        }
+    },
+    "ensure_mark": {
+        "timeout": 3000,
+        "on_error": ["空白任务"],
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [785, 482, 219, 59],
+                "expected": ["确定", "当前", "选择"]
+            }
+        },
+        "action": "Click",
+        "post_wait_freeze": 1000
+    },
+    "choice_mark": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [185, 537, 120, 180],
+                "template": "战斗任务/选择刻印.png",
+                "threshold": 0.6
+            }
+        },
+        "action": "Click"
+    }
+}

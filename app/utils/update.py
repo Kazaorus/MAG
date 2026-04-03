@@ -875,6 +875,8 @@ class BaseUpdate(QThread):
 
 class Update(BaseUpdate):
 
+    FORCE_FULL_DOWNLOAD_VERSION = "v0.0.1"
+
     # 当以“仅检查更新”模式运行时，用于在检查完成后返回结果
     check_result_ready = Signal(dict)
 
@@ -1028,6 +1030,8 @@ class Update(BaseUpdate):
             return
 
         self._is_running = True
+        # 从配置中获取 mirror_cdk
+        self.mirror_cdk = self.Mirror_ckd()
         try:
             # 每次运行前按当前配置初始化上下文（包括 interface / 频道 / 版本 等）
             self._init_run_context()
@@ -1476,17 +1480,40 @@ class Update(BaseUpdate):
             self.current_res_id,
             "***" if self.mirror_cdk else "无",
         )
+        # 记录本次检查的关键开关状态，便于排查“为何走 GitHub / Mirror / 强制下载模式”
+        try:
+            force_github_flag = cfg.get(cfg.force_github)
+        except Exception:
+            force_github_flag = None
+        logger.debug(
+            "  [检查更新] 开关状态: force_full_download=%s, force_github=%s",
+            self.force_full_download,
+            force_github_flag,
+        )
+
         self.download_url = None
         self.version_name = None
         self.release_note = ""
 
-        # 尝试 Mirror 源（强制下载模式跳过）
-        if not self.force_full_download and self.current_res_id:
-            logger.info("  [检查更新] 尝试 MirrorChyan 源...")
+        mirror_request_version = (
+            self.FORCE_FULL_DOWNLOAD_VERSION
+            if self.force_full_download
+            else self.current_version
+        )
+
+        # 尝试 Mirror 源；强制全量下载时使用约定版本号请求完整资源包
+        if self.current_res_id:
+            if self.force_full_download:
+                logger.info(
+                    "  [检查更新] 强制全量下载模式：使用 MirrorChyan 请求全量包，current_version=%s",
+                    mirror_request_version,
+                )
+            else:
+                logger.info("  [检查更新] 尝试 MirrorChyan 源...")
             mirror_result = self.mirror_check(
                 res_id=self.current_res_id,
                 cdk=self.mirror_cdk,
-                version=self.current_version,
+                version=mirror_request_version,
                 channel=self.current_channel,
                 os_type=self.current_os_type,
                 arch=self.current_arch,
@@ -1501,10 +1528,15 @@ class Update(BaseUpdate):
 
             # Mirror 检查表示当前版本已是最新
             if mirror_status == "no_need":
-                logger.info("  [检查更新] Mirror: 当前已是最新版本")
-                self.latest_update_version = self.current_version
-                cfg.set(cfg.latest_update_version, self.latest_update_version)
-                return False
+                if self.force_full_download:
+                    logger.info(
+                        "  [检查更新] Mirror 在强制全量下载模式下返回 no_need，回退 GitHub 最新版本"
+                    )
+                else:
+                    logger.info("  [检查更新] Mirror: 当前已是最新版本")
+                    self.latest_update_version = self.current_version
+                    cfg.set(cfg.latest_update_version, self.latest_update_version)
+                    return False
             elif mirror_status == "failed_info":
                 logger.info(
                     "  [检查更新] Mirror 检查失败: %s", mirror_result.get("msg")
@@ -1559,8 +1591,14 @@ class Update(BaseUpdate):
             else:
                 logger.info("  [检查更新] Mirror 未提供版本号，回退 GitHub 检查")
         else:
+            # 进入该分支的两种典型情况：
+            # 1) current_res_id 为空：当前资源未配置 MirrorChyan ID
+            if not self.current_res_id:
+                logger.info(
+                    "  [检查更新] 因未配置 MirrorChyan 资源ID，直接跳过 Mirror 源"
+                )
             logger.info(
-                "  [检查更新] 强制下载模式：跳过 Mirror 源，直接使用 GitHub 最新版本"
+                "  [检查更新] 回退到 GitHub 最新版本检查"
             )
 
         # 尝试 GitHub
@@ -1630,16 +1668,14 @@ class Update(BaseUpdate):
                 result_data["release_note"] = self.release_note
             return result_data
 
-        download_url = None
-        for assets in github_result.get("assets", []) or []:
-            if not isinstance(assets, dict):
-                continue
-            if assets.get("name") in [
-                f"{self.project_name}-{self.current_os_type}-{self.current_arch}-{target_version}.zip",
-                f"{self.project_name}-{self.current_os_type}-{self.current_arch}-{target_version}.tar.gz",
-            ]:
-                download_url = assets.get("browser_download_url")
-                break
+        download_asset = self._select_github_asset_by_keywords(
+            github_result.get("assets", []) or [], target_version
+        )
+        if not download_asset:
+            logger.warning("  [检查更新] GitHub: 未找到下载地址")
+            return False
+
+        download_url = download_asset.get("browser_download_url")
 
         if not download_url:
             logger.warning("  [检查更新] GitHub: 未找到下载地址")
@@ -1664,6 +1700,61 @@ class Update(BaseUpdate):
             result_data["release_note"] = self.release_note
         return result_data
 
+    def _select_github_asset_by_keywords(
+        self,
+        assets: Any,
+        target_version: str,
+        primary_name: str | None = None,
+    ) -> dict | None:
+        """
+        在 GitHub release 资产中使用项目名、版本、OS、架构和压缩后缀组合匹配命中率最高的文件。
+        """
+        normalized_tokens = []
+        for part in (
+            primary_name or self.project_name,
+            target_version,
+            self.current_os_type,
+            self.current_arch,
+        ):
+            if isinstance(part, str) and part:
+                normalized_tokens.append(part.lower())
+
+        version = str(target_version or "")
+        stripped_version = version.lstrip("vV")
+        if stripped_version and stripped_version != version:
+            normalized_tokens.append(stripped_version.lower())
+
+        normalized_assets = assets if isinstance(assets, list) else []
+        best_asset = None
+        best_score = -1
+        for asset in normalized_assets:
+            if not isinstance(asset, dict):
+                continue
+            asset_name = asset.get("name")
+            if not isinstance(asset_name, str):
+                continue
+            normalized_name = asset_name.lower()
+            if normalized_name.endswith(".tar.gz"):
+                pass
+            elif normalized_name.endswith(".zip"):
+                pass
+            else:
+                continue
+
+            score = sum(1 for token in normalized_tokens if token in normalized_name)
+            if (
+                best_asset is None
+                or score > best_score
+                or (
+                    score == best_score
+                    and len(normalized_name) < len(best_asset.get("name", "") or "")
+                )
+            ):
+                best_asset = asset
+                best_score = int(score)
+
+        return best_asset
+
     def check_ui_update(self, fetch_download_url: bool = True) -> dict | bool:
         """
         检查 UI 更新：
@@ -1674,7 +1765,7 @@ class Update(BaseUpdate):
         # 保证运行环境（os_type / arch / current_version 等）已初始化（UI 模式）
         self._init_run_context(ui_mode=True)
 
-        logger.info("  [检查更新] 开始检查...")
+        logger.info("  [检查更新-UI] 开始检查 UI 更新...")
         from app.common.__version__ import __version__
 
         mirror_id = "MFW-PyQt6"
@@ -1687,9 +1778,20 @@ class Update(BaseUpdate):
         self.current_version = fixed_version
 
         logger.debug(
-            "  [检查更新] 资源ID: %s, CDK: %s",
+            "  [检查更新-UI] 资源ID: %s, CDK: %s",
             mirror_id,
             "***" if self.mirror_cdk else "无",
+        )
+
+        # 记录 UI 更新检查的关键开关状态
+        try:
+            force_github_flag = cfg.get(cfg.force_github)
+        except Exception:
+            force_github_flag = None
+        logger.debug(
+            "  [检查更新-UI] 开关状态: force_full_download=%s, force_github=%s",
+            self.force_full_download,
+            force_github_flag,
         )
 
         # 尝试 Mirror 源（强制下载模式跳过）
@@ -1839,16 +1941,16 @@ class Update(BaseUpdate):
                 result_data["release_note"] = self.release_note
             return result_data
 
-        download_url = None
-        for assets in github_result.get("assets", []) or []:
-            if not isinstance(assets, dict):
-                continue
-            if assets.get("name") in [
-                f"{ui_name}-{self.current_os_type}-{self.current_arch}-{target_version}.zip",
-                f"{ui_name}-{self.current_os_type}-{self.current_arch}-{target_version}.tar.gz",
-            ]:
-                download_url = assets.get("browser_download_url")
-                break
+        download_asset = self._select_github_asset_by_keywords(
+            github_result.get("assets", []) or [],
+            target_version,
+            primary_name=ui_name,
+        )
+        if not download_asset:
+            logger.warning("  [检查更新] GitHub: 未找到下载地址")
+            return False
+
+        download_url = download_asset.get("browser_download_url")
 
         if not download_url:
             logger.warning("  [检查更新] GitHub: 未找到下载地址")

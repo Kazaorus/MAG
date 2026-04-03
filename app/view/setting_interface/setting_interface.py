@@ -5,6 +5,7 @@ MFW-ChainFlow Assistant 设置界面
 """
 
 import json
+import os
 import re
 from time import perf_counter
 from pathlib import Path
@@ -55,20 +56,21 @@ from app.core.core import ServiceCoordinator
 from app.utils.crypto import crypto_manager
 from app.utils.logger import logger
 from app.utils.update import Update
-from app.view.setting_interface.widget.ProxySettingCard import ProxySettingCard
+from app.view.setting_interface.widget.proxy_setting_card import ProxySettingCard
 from app.utils.hotkey_manager import GlobalHotkeyManager
-from app.view.setting_interface.widget.SliderSettingCard import SliderSettingCard
+from app.view.setting_interface.widget.slider_setting_card import SliderSettingCard
 import sys
-from app.view.setting_interface.widget.LineEditCard import (
+from app.view.setting_interface.widget.line_edit_card import (
     LineEditCard,
     MirrorCdkLineEditCard,
 )
-from app.view.setting_interface.widget.NoticeType import (
+from app.view.setting_interface.widget.notice_type import (
     QYWXNoticeType,
     DingTalkNoticeType,
     LarkNoticeType,
     SMTPNoticeType,
     WxPusherNoticeType,
+    GotifyNoticeType,
     NoticeTimingDialog,
 )
 
@@ -124,19 +126,97 @@ def rename_updater_binary(old_name: str, new_name: str) -> None:
         os.rename(old_name, new_name)
 
 
-def launch_updater_process() -> None:
+def _is_running_with_admin_privileges() -> bool:
+    """检查当前进程是否具有管理员/root 权限。"""
+    if sys.platform.startswith("win32"):
+        try:
+            import ctypes
+
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception as exc:  # pragma: no cover - admin 检测失败日志仍然有价值
+            logger.error("检查管理员权限失败: %s", exc)
+            return False
+
+    get_euid = getattr(os, "geteuid", None)
+    if callable(get_euid):
+        try:
+            return get_euid() == 0
+        except Exception as exc:  # pragma: no cover - 异常比较罕见
+            logger.error("检查 root 权限失败: %s", exc)
+    return False
+
+
+def _start_windows_process_with_admin(executable: Path, args: list[str]) -> None:
+    """使用 ShellExecuteW(runas) 在 Windows 上以管理员权限启动更新器。"""
+    import ctypes
+    import subprocess as _subprocess
+
+    cmdline = _subprocess.list2cmdline(args)
+    working_dir = str(executable.parent)
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", str(executable), cmdline, working_dir, 1
+    )
+    if result <= 32:
+        raise RuntimeError(f"以管理员权限启动更新器失败: ShellExecuteW 返回值 {result}")
+
+
+def launch_updater_process(*extra_args: str) -> None:
     """启动更新器进程的底层实现，由调用方负责异常处理/提示。"""
     import sys
     import subprocess
+    import os
+
+    extra_arg_list = list(extra_args)
+    # 透传“父进程信息”，供更新器跨平台精确等待主程序完全退出
+    # - parent_pid: 当前进程 PID
+    # - parent_create_time: 防止 PID 复用导致误判
+    # - mfw_exe_path: 若为 frozen，可用于更新器更可靠地识别其它残留实例
+    parent_args: list[str] = []
+    try:
+        parent_pid = os.getpid()
+        parent_args.extend(["--parent-pid", str(parent_pid)])
+        try:
+            import psutil  # type: ignore
+
+            parent_args.extend(
+                ["--parent-create-time", str(psutil.Process(parent_pid).create_time())]
+            )
+        except Exception as exc:
+            logger.debug("获取 parent_create_time 失败，降级为仅透传 PID: %s", exc)
+
+        if getattr(sys, "frozen", False):
+            parent_args.extend(["--mfw-exe-path", str(Path(sys.executable).resolve())])
+    except Exception as exc:
+        logger.debug("构造更新器父进程参数失败（将继续尝试启动更新器）: %s", exc)
 
     if sys.platform.startswith("win32"):
-        logger.info("启动更新程序: ./MFWUpdater1.exe -update")
-        subprocess.Popen(["./MFWUpdater1.exe", "-update"])
+        updater_executable = Path("./MFWUpdater1.exe")
+        resolved_executable = updater_executable.resolve(strict=False)
+        args = (
+            ["-update"] + parent_args + ["--shutdown-timeout", "180"] + extra_arg_list
+        )
+        command_line = subprocess.list2cmdline([str(resolved_executable)] + args)
+        if _is_running_with_admin_privileges():
+            logger.info(
+                "主程序具有管理员权限，使用管理员方式启动更新程序: %s", command_line
+            )
+            _start_windows_process_with_admin(resolved_executable, args)
+            return
+        logger.info("启动更新程序: %s", command_line)
+        cmd = [str(resolved_executable)] + args
     elif sys.platform.startswith(("darwin", "linux")):
-        logger.info("启动更新程序: ./MFWUpdater1 -update")
-        subprocess.Popen(["./MFWUpdater1", "-update"])
+        updater_executable = Path("./MFWUpdater1")
+        resolved_executable = updater_executable.resolve(strict=False)
+        args = (
+            ["-update"] + parent_args + ["--shutdown-timeout", "180"] + extra_arg_list
+        )
+        command_line = subprocess.list2cmdline([str(resolved_executable)] + args)
+        logger.info("启动更新程序: %s", command_line)
+        cmd = [str(resolved_executable)] + args
     else:
         raise NotImplementedError("Unsupported platform")
+
+    subprocess.Popen(cmd)
 
 
 class SettingInterface(QWidget):
@@ -162,12 +242,15 @@ class SettingInterface(QWidget):
         self,
         service_coordinator: ServiceCoordinator,
         parent=None,
+        *,
+        propagate_direct_run_arg: bool = False,
     ):
         super().__init__(parent=parent)
         self.setObjectName("settingInterface")
         self._service_coordinator = service_coordinator
         self.interface_data = self._service_coordinator.task.interface
         self._suppress_multi_resource_signal = False
+        self._propagate_direct_run_arg = bool(propagate_direct_run_arg)
 
         self._license_content = self.interface_data.get("license", "")
         self._github_url = self.interface_data.get(
@@ -223,6 +306,7 @@ class SettingInterface(QWidget):
         self.SMTP_noticeTypeCard.clicked.connect(self._on_smtp_notice_clicked)
         self.WxPusher_noticeTypeCard.clicked.connect(self._on_wxpusher_notice_clicked)
         self.QYWX_noticeTypeCard.clicked.connect(self._on_qywx_notice_clicked)
+        self.gotify_noticeTypeCard.clicked.connect(self._on_gotify_notice_clicked)
         self.notice_timing_card.clicked.connect(self._on_notice_timing_clicked)
 
     def _setup_ui(self):
@@ -715,8 +799,21 @@ class SettingInterface(QWidget):
             configItem=cfg.auto_minimize_on_startup,
             parent=self.start_Setting,
         )
+        self.minimize_to_tray_card = SwitchSettingCard(
+            FIF.MINIMIZE,
+            self.tr("Minimize to tray (Windows)"),
+            self.tr(
+                "When enabled, minimizing the window will hide it to the system tray"
+            ),
+            configItem=cfg.minimize_to_tray_on_minimize_windows,
+            parent=self.start_Setting,
+        )
+        if not sys.platform.startswith("win32"):
+            # Windows 专属功能：其它平台禁用
+            self.minimize_to_tray_card.setEnabled(False)
         self.start_Setting.addSettingCard(self.run_after_startup)
         self.start_Setting.addSettingCard(self.auto_minimize_card)
+        self.start_Setting.addSettingCard(self.minimize_to_tray_card)
         self.add_setting_group(self.start_Setting)
 
     def initialize_personalization_settings(self):
@@ -767,7 +864,7 @@ class SettingInterface(QWidget):
             FIF.LANGUAGE,
             self.tr("Language"),
             self.tr("Set your preferred language for UI"),
-            texts=["简体中文", "繁體中文", "English"],
+            texts=["简体中文", "繁體中文", "日本語", "English"],
             parent=self.personalGroup,
         )
 
@@ -1108,11 +1205,48 @@ class SettingInterface(QWidget):
             parent=self.noticeGroup,
         )
 
+        if cfg.get(cfg.Notice_Gotify_status):
+            gotify_contene = self.tr("Gotify Notification Enabled")
+        else:
+            gotify_contene = self.tr("Gotify Notification Disabled")
+
+        self.gotify_noticeTypeCard = PrimaryPushSettingCard(
+            text=self.tr("Modify"),
+            icon=FIF.SEND,
+            title=self.tr("Gotify"),
+            content=gotify_contene,
+            parent=self.noticeGroup,
+        )
+
         self.noticeGroup.addSettingCard(self.dingtalk_noticeTypeCard)
         self.noticeGroup.addSettingCard(self.lark_noticeTypeCard)
         self.noticeGroup.addSettingCard(self.SMTP_noticeTypeCard)
         self.noticeGroup.addSettingCard(self.WxPusher_noticeTypeCard)
         self.noticeGroup.addSettingCard(self.QYWX_noticeTypeCard)
+        self.noticeGroup.addSettingCard(self.gotify_noticeTypeCard)
+
+        # 发送格式：纯文本 / HTML（影响如 SMTP 等支持 HTML 的渠道）
+        self.notice_format_card = ComboBoxSettingCard(
+            cfg.notice_send_format,
+            FIF.EDIT,
+            self.tr("Send Format"),
+            self.tr("Plain text or HTML for external notifications (e.g. email body)"),
+            texts=[self.tr("Plain text"), self.tr("HTML")],
+            parent=self.noticeGroup,
+        )
+        self.noticeGroup.addSettingCard(self.notice_format_card)
+
+        # 是否随通知发送截图
+        self.notice_send_screenshot_card = SwitchSettingCard(
+            FIF.PHOTO,
+            self.tr("Attach screenshot to notice"),
+            self.tr(
+                "When enabled, a screenshot is captured and sent with notifications (e.g. as email attachment) if controller is available"
+            ),
+            cfg.notice_send_screenshot,
+            parent=self.noticeGroup,
+        )
+        self.noticeGroup.addSettingCard(self.notice_send_screenshot_card)
 
         # 添加通知时机设置按钮
         self.notice_timing_card = PrimaryPushSettingCard(
@@ -1136,7 +1270,9 @@ class SettingInterface(QWidget):
         self.low_power_monitoring_mode_card = SwitchSettingCard(
             FIF.POWER_BUTTON,
             self.tr("Low Power Monitoring Mode"),
-            self.tr("Use cached images instead of dedicated monitoring thread, refresh rate: 24 FPS"),
+            self.tr(
+                "Use cached images instead of dedicated monitoring thread, refresh rate: 24 FPS"
+            ),
             configItem=cfg.low_power_monitoring_mode,
             parent=self.taskGroup,
         )
@@ -1258,8 +1394,47 @@ class SettingInterface(QWidget):
             self.compatibility_group,
         )
 
+        self.log_zip_include_images_card = SwitchSettingCard(
+            FIF.PHOTO,
+            self.tr("Include images in log zip"),
+            self.tr(
+                "Include log images when generating log zip package. The number of images included equals the number displayed in the log interface."
+            ),
+            cfg.log_zip_include_images,
+            self.compatibility_group,
+        )
+
+        # 初始化时计算描述（按每张图片200KB计算）
+        initial_count = (
+            cfg.get(cfg.log_max_images) if hasattr(cfg, "log_max_images") else 25
+        )
+        image_size_kb = 200  # 每张图片200KB
+        total_memory_kb = initial_count * image_size_kb
+        if total_memory_kb < 1024:
+            memory_str = f"{total_memory_kb:.0f} KB"
+        else:
+            total_memory_mb = total_memory_kb / 1024
+            memory_str = f"{total_memory_mb:.2f} MB"
+        initial_content = self.tr(
+            "Set cache image count, current cache usage: {}"
+        ).format(memory_str)
+
+        self.log_max_images_card = SliderSettingCard(
+            FIF.PHOTO,
+            self.tr("Max log images"),
+            initial_content,
+            parent=self.compatibility_group,
+            minimum=1,
+            maximum=300,
+            step=1,
+            config_item=cfg.log_max_images,
+            on_value_changed=self._on_log_max_images_changed,
+        )
+
         self.compatibility_group.addSettingCard(self.multi_resource_adaptation_card)
         self.compatibility_group.addSettingCard(self.save_screenshot_card)
+        self.compatibility_group.addSettingCard(self.log_zip_include_images_card)
+        self.compatibility_group.addSettingCard(self.log_max_images_card)
         self.add_setting_group(self.compatibility_group)
 
     def _initialize_proxy_controls(self):
@@ -1321,6 +1496,10 @@ class SettingInterface(QWidget):
             return str(decrypted)
         except Exception as exc:
             logger.warning("解密 Mirror CDK 失败: %s", exc)
+            signalBus.info_bar_requested.emit(
+                "warning",
+                self.tr("decrypt Mirror CDK failed, please fill in again and save."),
+            )
             return ""
 
     def _onMirrorCardChange(self):
@@ -2003,6 +2182,8 @@ class SettingInterface(QWidget):
                 self._suppress_multi_resource_signal = False
                 cfg.set(cfg.multi_resource_adaptation, False)
                 return
+            # 先写入配置，确保其他组件在收到信号时能立即读取到最新状态（例如主窗口立刻关闭公告功能）
+            cfg.set(cfg.multi_resource_adaptation, True)
             # 二次确认通过后，执行多资源适配启用后的后续操作
             self.run_multi_resource_post_enable_tasks()
             # 通知主界面等组件：多资源适配已启用，可初始化相关界面
@@ -2012,12 +2193,37 @@ class SettingInterface(QWidget):
                 logger.warning(
                     f"发射 multi_resource_adaptation_enabled 信号失败: {exc}"
                 )
+            return
 
         cfg.set(cfg.multi_resource_adaptation, bool(checked))
 
     def _on_save_screenshot_changed(self, checked: bool):
         """保存截图开关，无需二次确认。"""
         cfg.set(cfg.save_screenshot, bool(checked))
+
+    def _on_log_max_images_changed(self, value: int):
+        """日志图片数量改变时的回调，动态更新描述"""
+        # 按每张图片200KB计算
+        image_size_kb = 200  # 每张图片200KB
+        total_memory_kb = value * image_size_kb
+
+        # 格式化内存大小显示
+        if total_memory_kb < 1024:
+            memory_str = f"{total_memory_kb:.0f} KB"
+        else:
+            total_memory_mb = total_memory_kb / 1024
+            memory_str = f"{total_memory_mb:.2f} MB"
+
+        # 更新描述文本
+        content = self.tr("Set cache image count, current cache usage: {}").format(
+            memory_str
+        )
+
+        if hasattr(self, "log_max_images_card"):
+            if hasattr(self.log_max_images_card, "setContent"):
+                self.log_max_images_card.setContent(content)
+            elif hasattr(self.log_max_images_card, "contentLabel"):
+                self.log_max_images_card.contentLabel.setText(content)
 
     def _update_notice_card_status(self, notice_type: str):
         """更新通知卡片的状态显示"""
@@ -2051,6 +2257,12 @@ class SettingInterface(QWidget):
             else:
                 content = self.tr("QYWX Notification Disabled")
             self.QYWX_noticeTypeCard.setContent(content)
+        elif notice_type == "Gotify":
+            if cfg.get(cfg.Notice_Gotify_status):
+                content = self.tr("Gotify Notification Enabled")
+            else:
+                content = self.tr("Gotify Notification Disabled")
+            self.gotify_noticeTypeCard.setContent(content)
 
     def _on_dingtalk_notice_clicked(self):
         """处理钉钉通知卡片点击事件"""
@@ -2087,6 +2299,13 @@ class SettingInterface(QWidget):
         dialog = QYWXNoticeType(parent)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._update_notice_card_status("QYWX")
+
+    def _on_gotify_notice_clicked(self):
+        """处理Gotify通知卡片点击事件"""
+        parent = self.window() or self
+        dialog = GotifyNoticeType(parent)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._update_notice_card_status("Gotify")
 
     def _on_notice_timing_clicked(self):
         """处理通知时机设置卡片点击事件"""
@@ -2510,6 +2729,7 @@ class SettingInterface(QWidget):
         self._bind_stop_button(self.tr("Stop update"), enable=False)
         self._lock_update_button_temporarily()
         logger.info("触发资源重置，强制全量下载最新资源包（跳过 update_flag/hotfix）")
+        signalBus.info_bar_requested.emit("info", self.tr("Starting Reset Resource"))
 
         # 创建强制全量下载的更新器实例
         interface = self._service_coordinator.task.interface or {}
@@ -2689,7 +2909,8 @@ class SettingInterface(QWidget):
     def _start_updater(self):
         """启动更新程序（允许更新器自行显示界面）。"""
         try:
-            launch_updater_process()
+            extra_args = ["-d"] if self._propagate_direct_run_arg else []
+            launch_updater_process(*extra_args)
         except Exception as e:
             logger.error(f"启动更新程序失败: {e}")
             signalBus.info_bar_requested.emit("error", str(e))
@@ -2736,3 +2957,4 @@ class SettingInterface(QWidget):
         """停止更新"""
         if self._updater and self._updater.isRunning():
             self._updater.stop()
+

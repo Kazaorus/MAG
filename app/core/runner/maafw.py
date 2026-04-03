@@ -24,7 +24,12 @@ from maa.context import Context, ContextEventSink
 from maa.custom_action import CustomAction
 from maa.custom_recognition import CustomRecognition
 
-from maa.controller import AdbController, Win32Controller
+from maa.controller import (
+    AdbController,
+    Win32Controller,
+    PlayCoverController,
+    GamepadController,
+)
 from maa.tasker import Tasker
 from maa.agent_client import AgentClient
 from maa.resource import Resource
@@ -34,6 +39,7 @@ from maa.define import (
     MaaAdbInputMethodEnum,
     MaaWin32InputMethodEnum,
     MaaWin32ScreencapMethodEnum,
+    MaaGamepadTypeEnum,
 )
 from PySide6.QtCore import QObject, Signal
 
@@ -62,18 +68,41 @@ from app.common.signal_bus import signalBus
 
 class MaaContextSink(ContextEventSink):
     def on_raw_notification(self, context: Context, msg: str, details: dict):
-        if detial := (details.get("focus") or {}).get(msg, ""):
-            detial = detial.replace("{name}", details.get("name", ""))
-            detial = detial.replace("{task_id}", str(details.get("task_id", "")))
-            detial = detial.replace("{list}", details.get("list", ""))
-            signalBus.callback.emit({"name": "context", "details": detial})
-            if msg == "Node.Recognition.Succeeded" :
-                if details.get("Abort", False):
-                    signalBus.callback.emit({"name": "abort"})
-                if details.get("Notice", False):
-                    pass
+        focus_entry = (details.get("focus") or {}).get(msg)
+        if not focus_entry:
+            return
 
+        # 兼容两种格式：
+        # 旧格式 (str): "focus": { "Node.Action.Starting": "{name} 开始执行" }
+        # 新格式 (dict): "focus": { "Node.Action.Starting": { "content": "{name} 开始执行", "display": "toast" } }
+        if isinstance(focus_entry, str):
+            content = focus_entry
+            display = ["log"]
+        elif isinstance(focus_entry, dict):
+            content = focus_entry.get("content", "")
+            raw_display = focus_entry.get("display", "log")
+            if isinstance(raw_display, list):
+                display = raw_display
+            else:
+                display = [raw_display]
+        else:
+            return
 
+        if not content:
+            return
+
+        # 替换占位符
+        content = content.replace("{name}", details.get("name", ""))
+        content = content.replace("{task_id}", str(details.get("task_id", "")))
+        content = content.replace("{list}", details.get("list", ""))
+
+        signalBus.callback.emit({"name": "context", "details": content, "display": display})
+
+        if msg == "Node.Recognition.Succeeded":
+            if details.get("Abort", False):
+                signalBus.callback.emit({"name": "abort"})
+            if details.get("Notice", False):
+                pass
 
     def on_node_next_list(
         self,
@@ -151,7 +180,9 @@ maa_tasker_sink = MaaTaskerEventSink()
 class MaaFW(QObject):
 
     resource: Resource | None
-    controller: AdbController | Win32Controller | None
+    controller: (
+        AdbController | Win32Controller | PlayCoverController | GamepadController | None
+    )
     tasker: Tasker | None
     agent: AgentClient | None
 
@@ -195,6 +226,8 @@ class MaaFW(QObject):
         self.agent_output_thread = None
 
         self.agent_data_raw = None
+        # v2.5.0: 启动 agent 子进程时注入的 PI_* 环境变量
+        self.agent_env_vars: Dict[str, str] = {}
         # 控制是否需要向 UI 报告自定义对象注册情况
         self.need_register_report: bool = False
         # 记录最近一次自定义对象加载的成功/失败情况
@@ -202,6 +235,10 @@ class MaaFW(QObject):
             "actions": {"success": [], "failed": []},
             "recognitions": {"success": [], "failed": []},
         }
+        # 记录添加到 sys.path 的路径，用于后续清理
+        self._custom_sys_paths: List[str] = []
+        # 记录上次加载的 custom_root，用于清理模块缓存
+        self._last_custom_root: Path | None = None
 
     def load_custom_objects(self, custom_config_path: str | Path) -> bool:
         """
@@ -239,6 +276,73 @@ class MaaFW(QObject):
             "recognitions": {"success": [], "failed": []},
         }
 
+        # 清理之前加载的模块：移除所有与之前 custom_root 相关的模块
+        # 包括主模块、子模块和顶级包模块（如 action, Recognition）
+        if hasattr(self, "_last_custom_root") and self._last_custom_root:
+            modules_to_remove = []
+            for module_key in list(sys.modules.keys()):
+                # 移除所有以文件路径为key的模块
+                if isinstance(module_key, str) and (
+                    module_key.startswith(str(self._last_custom_root))
+                    or (
+                        os.path.isabs(module_key)
+                        and Path(module_key).is_relative_to(self._last_custom_root)
+                    )
+                ):
+                    modules_to_remove.append(module_key)
+                # 检查模块的 __file__ 或 __path__ 是否在旧的 custom_root 下
+                elif isinstance(module_key, str):
+                    try:
+                        module = sys.modules.get(module_key)
+                        if not module:
+                            continue
+
+                        # 检查普通模块的 __file__
+                        if hasattr(module, "__file__") and module.__file__:
+                            try:
+                                if (
+                                    Path(module.__file__)
+                                    .resolve()
+                                    .is_relative_to(self._last_custom_root)
+                                ):
+                                    modules_to_remove.append(module_key)
+                                    continue
+                            except (ValueError, OSError):
+                                pass
+
+                        # 检查包模块的 __path__
+                        if hasattr(module, "__path__"):
+                            try:
+                                for path_entry in module.__path__:
+                                    if (
+                                        Path(path_entry)
+                                        .resolve()
+                                        .is_relative_to(self._last_custom_root)
+                                    ):
+                                        modules_to_remove.append(module_key)
+                                        break
+                            except (ValueError, OSError):
+                                pass
+                    except Exception:
+                        pass
+
+            for module_key in set(modules_to_remove):
+                try:
+                    del sys.modules[module_key]
+                    logger.debug(f"已清理模块缓存: {module_key}")
+                except KeyError:
+                    pass
+
+        # 清理之前添加的 sys.path 条目（如果存在）
+        for path in self._custom_sys_paths:
+            if path in sys.path:
+                sys.path.remove(path)
+                logger.debug(f"已从 sys.path 移除: {path}")
+        self._custom_sys_paths.clear()
+
+        # 记录当前 custom_root，用于下次清理
+        self._last_custom_root = custom_root
+
         # 将custom_root的父目录添加到sys.path，以便模块可以使用绝对导入
         # 例如：from MPAcustom.action.tool.LoadSetting 需要 MPAcustom 的父目录在 sys.path 中
         # 同时也要添加custom_root本身，以便相对导入也能工作
@@ -248,11 +352,13 @@ class MaaFW(QObject):
         # 添加父目录到sys.path（用于绝对导入，如 from MPAcustom.xxx）
         if custom_root_parent not in sys.path:
             sys.path.insert(0, custom_root_parent)
+            self._custom_sys_paths.append(custom_root_parent)
             logger.debug(f"已将父目录 {custom_root_parent} 添加到 sys.path")
 
         # 添加custom_root本身到sys.path（用于相对导入）
         if custom_root_str not in sys.path:
             sys.path.insert(0, custom_root_str)
+            self._custom_sys_paths.append(custom_root_str)
             logger.debug(f"已将 {custom_root_str} 添加到 sys.path")
 
         def _get_bucket(type_name: str) -> str | None:
@@ -300,18 +406,35 @@ class MaaFW(QObject):
                 _record_failure(custom_type, custom_name, reason)
                 continue
 
-            # 使用文件名作为模块名，保持与custom内部引用一致
-            # 这样custom文件夹内部的代码可以使用 import custom 等正常引用
             module_name = Path(custom_file_path).stem
-
-            # 使用文件路径作为sys.modules的key，避免同名模块冲突
-            # 但模块的__name__仍然是文件名，这样custom内部的引用可以正常工作
             module_key = str(custom_file_path)
 
             # 如果该文件路径的模块已存在，先移除（可能是之前加载的）
             if module_key in sys.modules:
                 logger.debug(f"移除已存在的模块缓存: {module_key}")
                 del sys.modules[module_key]
+
+            # 计算模块的包名，用于支持相对导入
+            # 将 custom_root.name 作为包名，这样 from .action.Fishing 可以工作
+            custom_root_name = custom_root.name
+            try:
+                file_path_obj = Path(custom_file_path).resolve()
+                custom_root_obj = custom_root.resolve()
+                if file_path_obj.is_relative_to(custom_root_obj):
+                    relative_path = file_path_obj.relative_to(custom_root_obj)
+                    if len(relative_path.parts) > 1:
+                        # 文件在子目录中
+                        package_parts = [custom_root_name] + list(
+                            relative_path.parts[:-1]
+                        )
+                        package_name = ".".join(package_parts)
+                    else:
+                        # 文件在根目录
+                        package_name = custom_root_name
+                else:
+                    package_name = custom_root_name
+            except (ValueError, AttributeError):
+                package_name = custom_root_name
 
             spec = importlib.util.spec_from_file_location(module_name, custom_file_path)
             if spec is None or spec.loader is None:
@@ -322,8 +445,11 @@ class MaaFW(QObject):
 
             try:
                 module = importlib.util.module_from_spec(spec)
+                # 设置 __package__ 以支持相对导入（from .action.Fishing）
+                # 绝对导入（from action.Fishing）通过 sys.path 自动支持
+                module.__package__ = package_name
+
                 # 使用文件路径作为key存储到sys.modules，避免同名模块冲突
-                # 模块的__name__仍然是文件名，custom内部的引用可以正常工作
                 sys.modules[module_key] = module
                 spec.loader.exec_module(module)  # type: ignore[arg-type]
 
@@ -350,10 +476,6 @@ class MaaFW(QObject):
                 if resource.register_custom_action(custom_name, instance):
                     loaded_any = True
                     _record_success(custom_type, custom_name)
-                    if getattr(self, "need_register_report", False):
-                        custom_signal = getattr(signalBus, "custom_info", None)
-                        if custom_signal:
-                            custom_signal.emit({"type": "action", "name": custom_name})
                 else:
                     reason = f"自定义动作 {custom_name} 注册失败"
                     logger.warning(reason)
@@ -367,12 +489,6 @@ class MaaFW(QObject):
                 if resource.register_custom_recognition(custom_name, instance):
                     loaded_any = True
                     _record_success(custom_type, custom_name)
-                    if getattr(self, "need_register_report", False):
-                        custom_signal = getattr(signalBus, "custom_info", None)
-                        if custom_signal:
-                            custom_signal.emit(
-                                {"type": "recognition", "name": custom_name}
-                            )
                 else:
                     reason = f"自定义识别器 {custom_name} 注册失败"
                     logger.warning(reason)
@@ -392,16 +508,10 @@ class MaaFW(QObject):
 
         if actions_failed:
             for item in actions_failed:
-                log_method = getattr(
-                    logger, item.get("level", "warning"), logger.warning
-                )
-                log_method(f"自定义动作 {item['name']} 加载失败: {item['reason']}")
+                logger.warning(f"自定义动作 {item['name']} 加载失败: {item['reason']}")
         if recognitions_failed:
             for item in recognitions_failed:
-                log_method = getattr(
-                    logger, item.get("level", "warning"), logger.warning
-                )
-                log_method(f"自定义识别器 {item['name']} 加载失败: {item['reason']}")
+                logger.warning(f"自定义识别器 {item['name']} 加载失败: {item['reason']}")
 
         return loaded_any
 
@@ -468,9 +578,37 @@ class MaaFW(QObject):
 
         return True
 
+    @asyncify
+    def connect_playcover(self, address: str, uuid: str) -> bool:
+        controller = PlayCoverController(address, uuid)
+        controller = self._init_controller(controller)
+        connected = controller.post_connection().wait().succeeded
+        if not connected:
+            print(f"Failed to connect {address} {uuid}")
+            return False
+        return True
+
+    @asyncify
+    def connect_gamepad(
+        self,
+        hwnd: int,
+        gamepad_type: int = MaaGamepadTypeEnum.Xbox360,
+        screencap_method: int = MaaWin32ScreencapMethodEnum.DXGI_DesktopDup,
+    ) -> bool:
+        controller = GamepadController(hwnd, gamepad_type, screencap_method)
+        controller = self._init_controller(controller)
+        connected = controller.post_connection().wait().succeeded
+        if not connected:
+            print(f"Failed to connect {hwnd} {gamepad_type}")
+            return False
+        return True
+
     def _init_controller(
-        self, controller: AdbController | Win32Controller
-    ) -> AdbController | Win32Controller:
+        self,
+        controller: (
+            AdbController | Win32Controller | PlayCoverController | GamepadController
+        ),
+    ) -> AdbController | Win32Controller | PlayCoverController | GamepadController:
         if self.maa_controller_sink:
             controller.add_sink(self.maa_controller_sink)
         self.controller = controller
@@ -553,6 +691,15 @@ class MaaFW(QObject):
         # 使用 sys.frozen 判断是否打包（PyInstaller 标准方式）
         is_packed = getattr(sys, "frozen", False)
         encoding = "utf-8" if is_packed else "gbk"
+
+        # v2.5.0: 构建子进程环境变量，注入 PI_* 变量
+        env = os.environ.copy()
+        if self.agent_env_vars:
+            env.update(self.agent_env_vars)
+            logger.debug(
+                f"注入 PI_* 环境变量: {list(self.agent_env_vars.keys())}"
+            )
+
         try:
             agent_process = subprocess.Popen(
                 start_cmd,
@@ -562,6 +709,7 @@ class MaaFW(QObject):
                 encoding=encoding,
                 errors="replace",
                 bufsize=1,
+                env=env,
             )
             self.agent_thread = agent_process
             self._watch_agent_output(agent_process)

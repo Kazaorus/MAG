@@ -1,0 +1,88 @@
+{
+    "玩家召回任务": {
+        "next": [
+            "发起召回界面",
+            "[JumpBack]召回任务顶级界面",
+            "[JumpBack]关闭待机页面"
+        ]
+    },
+    "召回任务顶级界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [210, 0, 170, 71],
+                "expected": [
+                    "同行"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000
+    },
+    "发起召回界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [0, 104, 213, 247],
+                "expected": [
+                    "发起召回"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "分享召回码"
+        ]
+    },
+    "分享召回码": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [1046, 336, 169, 74],
+                "expected": [
+                    "分享"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 1000,
+        "next": [
+            "召回任务奖励界面"
+        ]
+    },
+    "召回任务奖励界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [0, 104, 213, 247],
+                "expected": [
+                    "召回任务"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "[JumpBack]领取召回任务奖励",
+            "[JumpBack]关闭奖励通知",
+            "直接返回主菜单"
+        ]
+    },
+    "领取召回任务奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [944, 289, 286, 393],
+                "expected": [
+                    "领取"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000,
+        "next": [
+            "关闭奖励通知"
+        ]
+    }
+}

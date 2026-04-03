@@ -2,8 +2,9 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from app.utils.logger import logger
-from app.core.service.Config_Service import ConfigService
-from app.core.Item import TaskItem, CoreSignalBus
+from app.core.service.config_service import ConfigService
+from app.core.item import TaskItem, CoreSignalBus
+from app.common.constants import _RESOURCE_, _CONTROLLER_
 
 # 速通配置默认值
 DEFAULT_SPEEDRUN_CONFIG: Dict[str, Any] = {
@@ -45,23 +46,52 @@ class TaskService:
                 self.current_tasks = config.tasks
                 self.know_task = config.know_task
                 self.default_option = self.gen_default_option()
+                # 在配置加载时就计算一次“可运行/隐藏”标记，确保 runner 可直接使用
+                self.refresh_hidden_flags()
 
                 # 发出 TaskItem 列表，UI 层可以选择转换为 dict 显示
                 self.signal_bus.tasks_loaded.emit(self.current_tasks)
                 self._check_know_task()
 
     def _check_know_task(self) -> bool:
-        unknown_tasks = []
+        unknown_tasks: list[str] = []
         if not self.interface:
             raise ValueError("Interface not loaded")
 
-        interface_tasks = [t["name"] for t in self.interface.get("task", [])]
+        interface_tasks = [t.get("name") for t in self.interface.get("task", [])]
+        interface_tasks = [t for t in interface_tasks if isinstance(t, str) and t]
+
+        # 当前配置中已存在的任务名（用于幂等：防止重复插入同名任务）
+        # 注意：在多资源模式切换 bundle 时，interface 可能先 reload 再 on_config_changed，
+        # 此时 self.current_tasks 仍是旧配置的任务列表；因此必须从“当前配置对象”取 tasks 判重。
+        config = self.config_service.get_config(self.config_service.current_config_id)
+        tasks_snapshot = (config.tasks if config else None) or (self.current_tasks or [])
+        existing_task_names = {t.name for t in tasks_snapshot if hasattr(t, "name") and t.name}
+
+        # 现有 know_task 去重（保持原顺序）
+        seen_known: set[str] = set()
+        dedup_known: list[str] = []
+        for name in self.know_task or []:
+            if not isinstance(name, str) or not name:
+                continue
+            if name in seen_known:
+                continue
+            seen_known.add(name)
+            dedup_known.append(name)
+        self.know_task = dedup_known
+
         for task in interface_tasks:
-            if task not in self.know_task:
+            if task not in seen_known:
                 unknown_tasks.append(task)
+                seen_known.add(task)
+
         for unknown_task in unknown_tasks:
             self.know_task.append(unknown_task)
-            self.add_task(unknown_task)
+            # 仅在配置里不存在同名任务时才真正添加（防止重复；多资源/普通模式通用）
+            if unknown_task in existing_task_names:
+                continue
+            if self.add_task(unknown_task):
+                existing_task_names.add(unknown_task)
 
         # 同步到当前配置对象并持久化
         config = self.config_service.get_config(self.config_service.current_config_id)
@@ -94,6 +124,204 @@ class TaskService:
         self.know_task = []
         self._check_know_task()
 
+    def apply_preset(self, preset: Dict[str, Any]) -> bool:
+        """在 init_new_config 之后应用预设配置。
+
+        预设会修改已添加任务的勾选状态和选项值，但不会从 know_task 中移除任务。
+        所有 interface 中的任务仍然保留在 know_task 中。
+
+        Args:
+            preset: 预设配置字典，包含 name, task 等字段。
+                preset["task"] 是一个列表，每个元素包含:
+                - name: 对应 interface task 的 name
+                - enabled: 可选，是否勾选（默认 True）
+                - option: 可选，该任务各配置项的预设值
+
+        Returns:
+            是否成功应用预设
+        """
+        if not preset or not isinstance(preset, dict):
+            return False
+
+        preset_tasks = preset.get("task", [])
+        if not isinstance(preset_tasks, list):
+            return False
+
+        config_id = self.config_service.current_config_id
+        if not config_id:
+            return False
+        config = self.config_service.get_config(config_id)
+        if not config:
+            return False
+
+        # 构建预设任务名 -> 预设任务配置 的映射
+        preset_task_map: Dict[str, Dict[str, Any]] = {}
+        for pt in preset_tasks:
+            if isinstance(pt, dict) and isinstance(pt.get("name"), str):
+                preset_task_map[pt["name"]] = pt
+
+        interface_options = self.interface.get("option", {}) if self.interface else {}
+
+        # 遍历当前配置的所有任务，应用预设
+        changed_tasks: List[TaskItem] = []
+        for task in config.tasks:
+            if task.is_base_task():
+                continue
+
+            if task.name in preset_task_map:
+                pt = preset_task_map[task.name]
+                # 应用勾选状态
+                task.is_checked = pt.get("enabled", True)
+                # 应用选项值
+                preset_option = pt.get("option")
+                if isinstance(preset_option, dict) and isinstance(task.task_option, dict):
+                    self._apply_preset_option(task, preset_option, interface_options)
+                changed_tasks.append(task)
+            else:
+                # 特殊任务（spt: true）无论是否在预设中都保持原状态，不取消勾选
+                if task.is_special:
+                    continue
+                # 不在预设中的普通任务，默认不勾选
+                if task.is_checked:
+                    task.is_checked = False
+                    changed_tasks.append(task)
+
+        # 批量更新
+        if changed_tasks:
+            self.update_tasks(changed_tasks)
+
+        return True
+
+    def _apply_preset_option(
+        self,
+        task: TaskItem,
+        preset_option: Dict[str, Any],
+        interface_options: Dict[str, Any],
+    ) -> None:
+        """将预设的选项值应用到任务的 task_option 中。
+
+        preset_option 的格式:
+            键: 对应 interface option 中的键名
+            值: 取决于 option.type:
+                - select/switch: string (case.name)
+                - checkbox: string[] (case.name 数组)
+                - input: record<string, string> (输入字段 name → 值)
+
+        Args:
+            task: 要修改的任务
+            preset_option: 预设的选项值
+            interface_options: interface 中定义的所有选项模板
+        """
+        if not isinstance(task.task_option, dict):
+            task.task_option = {}
+
+        for option_key, preset_value in preset_option.items():
+            if option_key not in task.task_option:
+                # 该选项在当前任务中不存在，跳过
+                continue
+
+            option_template = interface_options.get(option_key, {})
+            option_type = (option_template.get("type") or "select").lower()
+
+            current_option = task.task_option[option_key]
+            if not isinstance(current_option, dict):
+                current_option = {}
+                task.task_option[option_key] = current_option
+
+            if option_type == "checkbox":
+                # checkbox 类型：preset_value 应为 string[]（case.name 数组）
+                if isinstance(preset_value, list):
+                    current_option["value"] = list(preset_value)
+                    # 更新 children 的 hidden 状态
+                    self._update_children_visibility_checkbox(
+                        current_option, preset_value, option_key, option_template, interface_options
+                    )
+            elif option_type in ("select", "switch"):
+                # select/switch 类型：preset_value 应为 string（case.name）
+                if isinstance(preset_value, str):
+                    current_option["value"] = preset_value
+                    # 更新 children 的 hidden 状态
+                    self._update_children_visibility_select(
+                        current_option, preset_value, option_key, option_template, interface_options
+                    )
+            elif option_type == "input":
+                # input 类型：preset_value 应为 record<string, string>
+                if isinstance(preset_value, dict):
+                    if not isinstance(current_option.get("value"), dict):
+                        current_option["value"] = {}
+                    current_option["value"].update(preset_value)
+
+    def _update_children_visibility_select(
+        self,
+        option_data: Dict[str, Any],
+        selected_case_name: str,
+        option_key: str,
+        option_template: Dict[str, Any],
+        interface_options: Dict[str, Any],
+    ) -> None:
+        """更新 select/switch 类型选项的子选项可见性。"""
+        children = option_data.get("children")
+        if not isinstance(children, dict):
+            return
+
+        cases = option_template.get("cases", [])
+        for case in cases:
+            case_name = case.get("name", "")
+            option_values = case.get("option")
+            if not option_values:
+                continue
+
+            if isinstance(option_values, str):
+                child_keys = [option_values]
+            elif isinstance(option_values, list):
+                child_keys = [v for v in option_values if isinstance(v, str)]
+            else:
+                continue
+
+            for index, child_option_key in enumerate(child_keys):
+                child_key = f"{option_key}_child_{case_name}_{child_option_key}_{index}"
+                if child_key in children:
+                    if case_name == selected_case_name:
+                        children[child_key].pop("hidden", None)
+                    else:
+                        children[child_key]["hidden"] = True
+
+    def _update_children_visibility_checkbox(
+        self,
+        option_data: Dict[str, Any],
+        selected_case_names: List[str],
+        option_key: str,
+        option_template: Dict[str, Any],
+        interface_options: Dict[str, Any],
+    ) -> None:
+        """更新 checkbox 类型选项的子选项可见性。"""
+        children = option_data.get("children")
+        if not isinstance(children, dict):
+            return
+
+        selected_set = set(selected_case_names)
+        cases = option_template.get("cases", [])
+        for case in cases:
+            case_name = case.get("name", "")
+            option_values = case.get("option")
+            if not option_values:
+                continue
+
+            if isinstance(option_values, str):
+                child_keys = [option_values]
+            elif isinstance(option_values, list):
+                child_keys = [v for v in option_values if isinstance(v, str)]
+            else:
+                continue
+
+            for index, child_option_key in enumerate(child_keys):
+                child_key = f"{option_key}_child_{case_name}_{child_option_key}_{index}"
+                if child_key in children:
+                    if case_name in selected_set:
+                        children[child_key].pop("hidden", None)
+                    else:
+                        children[child_key]["hidden"] = True
+
     def reload_interface(self, interface: Dict[str, Any]):
         """刷新 interface 数据，用于热更新后同步"""
         logger.info("重新加载 interface 数据...")
@@ -104,10 +332,75 @@ class TaskService:
         # 重新生成默认选项
         self.default_option = self.gen_default_option()
 
+        # interface 变化可能影响任务可见性/可运行性，刷新一次隐藏标记
+        self.refresh_hidden_flags()
+
         # 检查是否有新任务
         self._check_know_task()
 
         logger.info("interface 数据重新加载完成")
+
+    def refresh_hidden_flags(self) -> None:
+        """根据当前 Resource/Controller 选项以及 interface 约束刷新每个任务的 is_hidden。
+
+        设计目标：任务配置层给出“可运行配置”，runner 只需要读取 is_checked/is_hidden。
+        """
+        try:
+            # 当前资源与控制器类型（为空则视为“不过滤”）
+            resource_name = ""
+            controller_type = ""
+
+            res_task = self.get_task(_RESOURCE_)
+            if res_task and isinstance(res_task.task_option, dict):
+                resource_name = str(res_task.task_option.get("resource", "") or "").strip()
+
+            ctrl_task = self.get_task(_CONTROLLER_)
+            if ctrl_task and isinstance(ctrl_task.task_option, dict):
+                controller_type = str(ctrl_task.task_option.get("controller_type", "") or "").strip()
+
+            interface_tasks = self.interface.get("task", []) if isinstance(self.interface, dict) else []
+            # name -> def 快速索引
+            task_def_map: dict[str, dict] = {}
+            if isinstance(interface_tasks, list):
+                for td in interface_tasks:
+                    if isinstance(td, dict) and isinstance(td.get("name"), str) and td.get("name"):
+                        task_def_map[td["name"]] = td
+
+            def _allowed_by_list(value: Any, current: str) -> bool:
+                """controller/resource 字段的通用判断：缺省/空 => 允许；否则必须命中。"""
+                if not current:
+                    return True
+                if value in (None, "", [], {}):
+                    return True
+                allowed: list[str] = []
+                if isinstance(value, str):
+                    if value.strip():
+                        allowed = [value.strip()]
+                elif isinstance(value, list):
+                    allowed = [str(x).strip() for x in value if x is not None and str(x).strip()]
+                else:
+                    # 非支持格式：兜底为允许，避免误伤
+                    return True
+                allowed_norm = {s.lower() for s in allowed if s}
+                return current.strip().lower() in allowed_norm
+
+            for t in self.current_tasks or []:
+                if not isinstance(t, TaskItem):
+                    continue
+                if t.is_base_task():
+                    t.is_hidden = False
+                    continue
+                td = task_def_map.get(t.name)
+                if not td:
+                    # interface 未定义该任务：默认不隐藏（兼容旧配置）
+                    t.is_hidden = False
+                    continue
+
+                ok_resource = _allowed_by_list(td.get("resource", None), resource_name)
+                ok_controller = _allowed_by_list(td.get("controller", None), controller_type)
+                t.is_hidden = not (ok_resource and ok_controller)
+        except Exception as exc:
+            logger.warning(f"刷新任务隐藏标记失败，将保持现状: {exc}")
 
     def _get_interface_speedrun(self, task_name: str) -> Dict[str, Any]:
         """从 interface 中获取任务的 speedrun 配置"""
@@ -245,52 +538,105 @@ class TaskService:
 
             cases = option_template.get("cases", [])
             if cases:
-                selected_case = _select_default_case(option_template)
-                if not selected_case:
-                    return {}
-                selected_case_name = selected_case.get("name", "")
-                option_result: dict[str, Any] = {"value": selected_case_name}
+                option_type = (option_template.get("type") or "select").lower()
 
-                children: dict[str, Any] = {}
-                for case in cases:
-                    case_name = case.get("name", "")
-                    option_values = case.get("option")
-                    if not option_values:
-                        continue
+                if option_type == "checkbox":
+                    # checkbox 类型：default_case 是列表，value 也是列表
+                    default_case_names = option_template.get("default_case", [])
+                    if isinstance(default_case_names, str):
+                        default_case_names = [default_case_names]
+                    # 如果没有指定 default_case，默认不选中任何项
+                    selected_case_names_set = set(default_case_names)
+                    option_result: dict[str, Any] = {"value": list(default_case_names)}
 
-                    if isinstance(option_values, str):
-                        child_keys = [option_values]
-                    elif isinstance(option_values, list):
-                        child_keys = [
-                            value for value in option_values if isinstance(value, str)
-                        ]
-                    else:
-                        continue
-
-                    for index, child_option_key in enumerate(child_keys):
-                        child_template = interface_options.get(child_option_key)
-                        if not child_template:
+                    children: dict[str, Any] = {}
+                    for case in cases:
+                        case_name = case.get("name", "")
+                        option_values = case.get("option")
+                        if not option_values:
                             continue
 
-                        child_default = _gen_option_defaults_recursive(
-                            child_option_key, child_template
-                        )
-                        child_entry = _normalize_child_payload(child_default)
-
-                        if case_name != selected_case_name:
-                            child_entry["hidden"] = True
+                        if isinstance(option_values, str):
+                            child_keys = [option_values]
+                        elif isinstance(option_values, list):
+                            child_keys = [
+                                value for value in option_values if isinstance(value, str)
+                            ]
                         else:
-                            child_entry.pop("hidden", None)
+                            continue
 
-                        child_key = (
-                            f"{option_key}_child_{case_name}_{child_option_key}_{index}"
-                        )
-                        children[child_key] = child_entry
+                        for index, child_option_key in enumerate(child_keys):
+                            child_template = interface_options.get(child_option_key)
+                            if not child_template:
+                                continue
 
-                if children:
-                    option_result["children"] = children
+                            child_default = _gen_option_defaults_recursive(
+                                child_option_key, child_template
+                            )
+                            child_entry = _normalize_child_payload(child_default)
 
-                return option_result
+                            if case_name not in selected_case_names_set:
+                                child_entry["hidden"] = True
+                            else:
+                                child_entry.pop("hidden", None)
+
+                            child_key = (
+                                f"{option_key}_child_{case_name}_{child_option_key}_{index}"
+                            )
+                            children[child_key] = child_entry
+
+                    if children:
+                        option_result["children"] = children
+
+                    return option_result
+                else:
+                    # select / switch 类型
+                    selected_case = _select_default_case(option_template)
+                    if not selected_case:
+                        return {}
+                    selected_case_name = selected_case.get("name", "")
+                    option_result: dict[str, Any] = {"value": selected_case_name}
+
+                    children: dict[str, Any] = {}
+                    for case in cases:
+                        case_name = case.get("name", "")
+                        option_values = case.get("option")
+                        if not option_values:
+                            continue
+
+                        if isinstance(option_values, str):
+                            child_keys = [option_values]
+                        elif isinstance(option_values, list):
+                            child_keys = [
+                                value for value in option_values if isinstance(value, str)
+                            ]
+                        else:
+                            continue
+
+                        for index, child_option_key in enumerate(child_keys):
+                            child_template = interface_options.get(child_option_key)
+                            if not child_template:
+                                continue
+
+                            child_default = _gen_option_defaults_recursive(
+                                child_option_key, child_template
+                            )
+                            child_entry = _normalize_child_payload(child_default)
+
+                            if case_name != selected_case_name:
+                                child_entry["hidden"] = True
+                            else:
+                                child_entry.pop("hidden", None)
+
+                            child_key = (
+                                f"{option_key}_child_{case_name}_{child_option_key}_{index}"
+                            )
+                            children[child_key] = child_entry
+
+                    if children:
+                        option_result["children"] = children
+
+                    return option_result
 
             return {}
 
@@ -580,7 +926,10 @@ class TaskService:
         )
 
         option_pipeline_override = get_pipeline_override_from_task_option(
-            self.interface, task.task_option, task.item_id
+            self.interface,
+            task.task_option,
+            task.item_id,
+            self.config_service.get_current_global_options() if task.item_id == _RESOURCE_ else None,
         )
 
         # 深度合并：任务级 pipeline_override + 选项级 pipeline_override

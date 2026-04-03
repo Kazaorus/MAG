@@ -130,7 +130,7 @@ if sys.platform == "darwin":
 
 elif sys.platform == "win32":
     base_command += [
-        "--icon=./logo.ico",
+        "--icon=./app/assets/icons/logo.ico",
         "--distpath",
         os.path.join("dist"),
     ]
@@ -192,24 +192,30 @@ if os.path.isdir(maa_bin_internal):
 # 复制README和许可证
 shutil.copy(
     os.path.join(os.getcwd(), "README.md"),
-    os.path.join(os.getcwd(), "dist", "MFW", "README.md"),
+    os.path.join(os.getcwd(), "dist", "MFW", "MFW_README.md"),
 )
-"""shutil.copy(
+shutil.copy(
     os.path.join(os.getcwd(), "README-en.md"),
     os.path.join(os.getcwd(), "dist", "MFW", "MFW_README-en.md"),
-)"""
+)
 shutil.copy(
     os.path.join(os.getcwd(), "LICENSE"),
-    os.path.join(os.getcwd(), "dist", "MFW", "LICENSE"),
+    os.path.join(os.getcwd(), "dist", "MFW", "MFW_LICENSE"),
 )
 
 os.makedirs(os.path.join(os.getcwd(), "dist", "MFW", "app", "i18n"), exist_ok=True)
 # 复制i18n文件
-for qm_file in ["i18n.zh_CN.qm", "i18n.zh_HK.qm"]:
-    shutil.copy(
-        os.path.join(os.getcwd(), "app", "i18n", qm_file),
-        os.path.join(os.getcwd(), "dist", "MFW", "app", "i18n", qm_file),
-    )
+for qm_file in [
+    "i18n.zh_CN.qm",
+    "i18n.zh_TW.qm",
+    "i18n.ja_JP.qm",
+]:
+    src = os.path.join(os.getcwd(), "app", "i18n", qm_file)
+    if os.path.isfile(src):
+        shutil.copy(
+            src,
+            os.path.join(os.getcwd(), "dist", "MFW", "app", "i18n", qm_file),
+        )
 
 # === 构建updater ===
 updater_command = [
@@ -289,43 +295,3 @@ def generate_file_list(input_dir, output_file=None):
 generate_file_list(
     os.path.join("dist", "MFW"), os.path.join("dist", "MFW", "file_list.txt")
 )
-
-# === 转移maafw资源文件 ===
-# 复制 assets 文件夹内容到 dist/MFW（白名单模式）
-assets_src = os.path.join(os.getcwd(), "assets")
-dist_mfw = os.path.join(os.getcwd(), "dist", "MFW")
-# 白名单：只复制这些文件和文件夹
-whitelist = ["interface.json", "resource", "custom", "custom_task_config"]
-if os.path.exists(assets_src):
-    assets_items = os.listdir(assets_src)
-    if assets_items:
-        # 对每个项目单独检查，只复制白名单中的项目
-        for item in assets_items:
-            # 检查是否在白名单中
-            if item not in whitelist:
-                print(f"[INFO] {item} skipped (not in whitelist)")
-                continue
-            src_item = os.path.join(assets_src, item)
-            dst_item = os.path.join(dist_mfw, item)
-            if os.path.exists(dst_item):
-                print(f"[INFO] {item} already exists in {dist_mfw}, skipping...")
-            else:
-                if os.path.isdir(src_item):
-                    shutil.copytree(src_item, dst_item)
-                    print(f"[INFO] Copied directory {item} to {dist_mfw}")
-                else:
-                    shutil.copy2(src_item, dst_item)
-                    print(f"[INFO] Copied file {item} to {dist_mfw}")
-    else:
-        print(f"[WARN] Assets folder is empty: {assets_src}")
-else:
-    print(f"[WARN] Assets folder not found: {assets_src}")
-
-
-# === 移动热更新标志 ===
-hotfix_flag_src = os.path.join(os.getcwd(), "update_flag.txt")
-hotfix_flag_dst = os.path.join(os.getcwd(), "dist", "MFW", "update_flag.txt")
-if os.path.exists(hotfix_flag_src):
-    shutil.copy2(hotfix_flag_src, hotfix_flag_dst)
-else:
-    print(f"[WARN] Hotfix flag not found: {hotfix_flag_src}")

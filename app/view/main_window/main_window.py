@@ -31,29 +31,53 @@ MFW-ChainFlow Assistant 主界面
 
 
 import asyncio
+import hashlib
+import json
 import shutil
 import sys
 import threading
 import zipfile
+from datetime import datetime, timedelta
 
+from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Optional
+from dataclasses import dataclass
+from typing import Callable, Dict, Optional
 
-from PySide6.QtCore import QSize, QTimer, Qt, QUrl
+from PySide6.QtCore import (
+    QEvent,
+    QSize,
+    QTimer,
+    Qt,
+    QUrl,
+    QPoint,
+    QRect,
+    QRectF,
+    Signal,
+    QObject,
+)
 from PySide6.QtGui import (
+    QAction,
     QIcon,
     QDesktopServices,
     QPixmap,
+    QPainter,
+    QColor,
+    QPen,
+    QFont,
+    QPainterPath,
 )
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QLabel,
+    QMenu,
     QWidget,
     QGraphicsOpacityEffect,
     QSizePolicy,
     QHBoxLayout,
     QVBoxLayout,
+    QSystemTrayIcon,
 )
 
 from qfluentwidgets import (
@@ -69,9 +93,6 @@ from qfluentwidgets import FluentIcon as FIF
 
 
 from app.view.task_interface.task_interface_logic import TaskInterface
-from app.view.special_task_interface.special_task_interface import (
-    SpecialTaskInterface,
-)
 from app.view.monitor_interface import MonitorInterface
 from app.view.schedule_interface.schedule_interface import ScheduleInterface
 from app.view.setting_interface.setting_interface import (
@@ -85,6 +106,130 @@ from app.utils.hotkey_manager import GlobalHotkeyManager
 from app.utils.logger import logger
 from app.core.core import ServiceCoordinator
 from app.widget.notice_message import NoticeMessageBox, DelayedCloseNoticeMessageBox
+from app.view.main_window.log_zip_dialog import LogZipDialog, LogZipOptions
+from app.view.main_window.log_zip_dialog import LogZipDialog, LogZipOptions, LogZipPreview
+
+
+class LogZipCancelled(Exception):
+    """日志打包被用户取消。"""
+
+
+@dataclass(slots=True)
+class LogZipFileEntry:
+    path: Path
+    arcname: str
+    locked: bool = False
+    category: str = ""
+
+
+@dataclass(slots=True)
+class LogZipLiveEntry:
+    arcname: str
+    image_bytes: bytes
+
+
+class TutorialHighlightOverlay(QWidget):
+    """覆盖层：突出显示目标控件并附加文字说明。"""
+
+    closed = Signal()
+
+    _HOLE_MARGIN = 6
+    _LABEL_MAX_WIDTH = 300
+
+    def __init__(self, parent, target_widget):
+        super().__init__(parent)
+        self._target_widget = target_widget
+        self._highlight_rect = QRect()
+        self._instruction_label = QLabel(self)
+        self._instruction_label.setWordWrap(True)
+        self._instruction_label.setStyleSheet(
+            "color: white; background: transparent; font-size: 12px;"
+        )
+        self._instruction_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._instruction_label.setMargin(4)
+        self._instruction_label.setMaximumWidth(self._LABEL_MAX_WIDTH)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowFlags(Qt.WindowType.Widget | Qt.WindowType.FramelessWindowHint)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_message(self, message: str):
+        self._instruction_label.setText(message)
+
+    def showEvent(self, event):
+        parent = self.parentWidget()
+        if parent:
+            self.resize(parent.size())
+        self.raise_()
+        self._update_geometry()
+        super().showEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_geometry()
+
+    def _update_geometry(self):
+        if not self._target_widget or not self._target_widget.isVisible():
+            self._highlight_rect = QRect()
+            self._instruction_label.hide()
+            self.update()
+            return
+
+        global_top_left = self._target_widget.mapToGlobal(QPoint(0, 0))
+        top_left = self.mapFromGlobal(global_top_left)
+        highlight = QRect(top_left, self._target_widget.size())
+        highlight = highlight.adjusted(
+            -self._HOLE_MARGIN,
+            -self._HOLE_MARGIN,
+            self._HOLE_MARGIN,
+            self._HOLE_MARGIN,
+        )
+        self._highlight_rect = highlight
+        label_width = min(self._LABEL_MAX_WIDTH, max(highlight.width(), 220))
+        label_height = self._instruction_label.sizeHint().height()
+
+        label_x = max(8, min(highlight.left(), self.width() - label_width - 8))
+        label_y = highlight.bottom() + 10
+        if label_y + label_height > self.height() - 8:
+            label_y = highlight.top() - 10 - label_height
+        label_y = max(8, label_y)
+
+        self._instruction_label.setGeometry(label_x, label_y, label_width, label_height)
+        self._instruction_label.show()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.OddEvenFill)
+        path.addRect(QRectF(self.rect()))
+        if self._highlight_rect.isValid():
+            path.addRoundedRect(QRectF(self._highlight_rect), 8, 8)
+        painter.fillPath(path, QColor(0, 0, 0, 160))
+        if self._highlight_rect.isValid():
+            painter.setPen(QPen(QColor(255, 255, 255, 200), 2))
+            painter.drawRoundedRect(self._highlight_rect, 8, 8)
+        painter.end()
+
+    def mousePressEvent(self, event):
+        self.close()
+        event.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)
+
+
+@dataclass
+class TutorialStep:
+    target_getter: Callable[[], QWidget | None]
+    message: str
 
 
 class CustomSystemThemeListener(SystemThemeListener):
@@ -100,7 +245,16 @@ ENABLE_TEST_INTERFACE_PAGE = cfg.get(cfg.enable_test_interface_page)
 
 class MainWindow(MSFluentWindow):
 
-    _LOCKED_LOG_NAMES = {"maa.log", "clash.log", "maa.log.bak"}
+    # 可能被占用的日志文件名（需要特殊读取方式）
+    _LOCKED_LOG_NAMES = {
+        "maa.log",
+        "maafw.log",
+        "clash.log",
+        "maa.bak.log",
+        "maa.log.bak",
+        "maafw.log.bak",
+    }
+    _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"}
     _THEME_LISTENER_TIMEOUT_MS = (
         2000  # 2 seconds timeout for theme listener thread termination
     )
@@ -112,6 +266,12 @@ class MainWindow(MSFluentWindow):
         switch_config_id: str | None = None,
         force_enable_test: bool = False,
     ):
+        # 在 super().__init__() 之前初始化可能被 resizeEvent 访问的属性，避免属性不存在错误
+        self._background_label = None
+        self._background_pixmap_original = None
+        self._background_opacity_effect = None
+        self._tutorial_overlay = None
+        
         super().__init__()
         self._loop = loop
         self._cli_auto_run = bool(auto_run)
@@ -122,9 +282,18 @@ class MainWindow(MSFluentWindow):
         self._auto_update_pending_restart = False
         self._pending_auto_run = False
         self._auto_run_scheduled = False  # 标记是否已调度过启动后自动运行，避免重复触发
-        self._bundle_interface_added_to_nav = False  # 标记 BundleInterface 是否已添加到导航栏
+        self._bundle_interface_added_to_nav = (
+            False  # 标记 BundleInterface 是否已添加到导航栏
+        )
         self._setting_update_completed = False  # 设置更新是否完成
         self._bundle_update_in_progress = False  # bundle 更新是否正在进行
+        self._tutorial_steps: list[TutorialStep] = []
+        self._tutorial_index = 0
+        # _tutorial_overlay 已在 super().__init__() 之前初始化
+        self._tray_icon: QSystemTrayIcon | None = None
+        self._startup_cleanup_scheduled = (
+            False  # 启动完成后清理旧图片/旧文件，仅执行一次
+        )
 
         cfg.set(cfg.save_screenshot, False)
         cfg.set(cfg.show_advanced_startup_options, False)
@@ -138,12 +307,21 @@ class MainWindow(MSFluentWindow):
         self._apply_cli_switch_config()
 
         self._announcement_pending_show = False
-        self._announcement_enabled = True  # 标记公告是否启用
+        # 多资源适配开启时：公告功能彻底关闭（不加载、不比对、不自动弹窗、无入口）
+        self._announcement_enabled = not bool(cfg.get(cfg.multi_resource_adaptation))
         self._log_zip_running = False
         self._log_zip_infobar: InfoBar | None = None
-        self._background_label: QLabel | None = None
-        self._background_pixmap_original: QPixmap | None = None
-        self._background_opacity_effect: QGraphicsOpacityEffect | None = None
+        self._log_zip_cancel_event: threading.Event | None = None
+        self._log_zip_dialog: LogZipDialog | None = None
+
+        # 监听“最小化到托盘”开关变化：关闭时立刻清理托盘图标，避免残留
+        try:
+            cfg.minimize_to_tray_on_minimize_windows.valueChanged.connect(
+                self._on_minimize_to_tray_setting_changed
+            )
+        except Exception as exc:
+            logger.debug("绑定最小化到托盘开关变更信号失败（已忽略）: %s", exc)
+
         self._init_announcement()
 
         # 初始化窗口
@@ -185,16 +363,20 @@ class MainWindow(MSFluentWindow):
         except Exception as exc:
             logger.error(f"创建 BundleInterface 失败: {exc}", exc_info=True)
             self.BundleInterface = None
-        
-        self.SettingInterface = SettingInterface(self.service_coordinator)
-        
+
+        self.SettingInterface = SettingInterface(
+            self.service_coordinator, propagate_direct_run_arg=self._cli_auto_run
+        )
+
         # 根据多资源适配状态控制 Bundle 和 Announcement 的显示
         # 如果多资源适配已开启：显示 Bundle，不显示 Announcement
         # 如果多资源适配未开启：显示 Announcement，不显示 Bundle
         multi_res_enabled = cfg.get(cfg.multi_resource_adaptation)
         logger.info(f"检查多资源适配状态（启动时）: {multi_res_enabled}")
         if multi_res_enabled:
-            logger.info("多资源适配已开启，添加 BundleInterface 到导航栏，隐藏 Announcement")
+            logger.info(
+                "多资源适配已开启，添加 BundleInterface 到导航栏，隐藏 Announcement"
+            )
             # 添加 Bundle，确保它在 Setting 之前
             if hasattr(self, "BundleInterface") and self.BundleInterface is not None:
                 self.addSubInterface(
@@ -206,8 +388,10 @@ class MainWindow(MSFluentWindow):
                 self._bundle_interface_added_to_nav = True
                 logger.info("✓ BundleInterface 已添加到导航栏")
         else:
-            logger.info("多资源适配未开启，显示 Announcement，BundleInterface 不会显示在导航栏")
-        
+            logger.info(
+                "多资源适配未开启，显示 Announcement，BundleInterface 不会显示在导航栏"
+            )
+
         # 添加 SettingInterface
         self.addSubInterface(
             self.SettingInterface,
@@ -215,7 +399,7 @@ class MainWindow(MSFluentWindow):
             self.tr("Setting"),
             position=NavigationItemPosition.BOTTOM,
         )
-        
+
         # 根据多资源适配状态决定是否插入 Announcement
         if not multi_res_enabled:
             # 多资源适配未开启时，插入 Announcement（使用 insertItem(0) 确保它在最前面）
@@ -223,7 +407,7 @@ class MainWindow(MSFluentWindow):
             logger.info("✓ Announcement 已添加到导航栏")
         else:
             logger.info("多资源适配已开启，Announcement 不会显示在导航栏")
-        
+
         # 添加导航项
         self.splashScreen.finish()
         self._maybe_show_pending_announcement()
@@ -234,7 +418,7 @@ class MainWindow(MSFluentWindow):
 
         # 连接公共信号
         self.connectSignalToSlot()
-        
+
         # 检查是否有待显示的错误信息（配置加载错误等）
         pending_error = self.service_coordinator.get_pending_error_message()
         if pending_error:
@@ -252,7 +436,7 @@ class MainWindow(MSFluentWindow):
             stop_factory=lambda: self.service_coordinator.stop_task_flow(),
         )
         signalBus.hotkey_shortcuts_changed.connect(self._reload_global_hotkeys)
-        
+
         # 检测快捷键权限（macOS/Linux）
         self._check_hotkey_permission()
         self._reload_global_hotkeys()
@@ -267,6 +451,136 @@ class MainWindow(MSFluentWindow):
             logger.warning(f"运行多资源适配启动钩子失败: {exc}")
 
         logger.info(" 主界面初始化完成。")
+        self._schedule_startup_cleanup_old_debug_files()
+
+    def _is_windows_platform(self) -> bool:
+        return sys.platform.startswith("win32")
+
+    def _schedule_startup_cleanup_old_debug_files(self) -> None:
+        """把 debug 目录旧图片/旧文件清理从“打包日志前”转移到“启动完成后”执行。
+
+        目的：
+        - 避免用户点击“打包日志”时发生删除，造成“打包前文件被清理”的体验问题
+        - 清理动作放到事件循环开始后，并在后台线程执行，尽量不阻塞 UI
+        """
+        if self._startup_cleanup_scheduled:
+            return
+        self._startup_cleanup_scheduled = True
+
+        def _kickoff():
+            debug_dir = Path.cwd() / "debug"
+
+            def _run():
+                try:
+                    if debug_dir.exists() and debug_dir.is_dir():
+                        self._cleanup_old_files(debug_dir)
+                except Exception as exc:
+                    logger.warning("启动后清理 debug 旧文件失败：%s", exc)
+
+            threading.Thread(target=_run, daemon=True).start()
+
+        # 等主界面初始化完成并进入事件循环后再执行
+        QTimer.singleShot(0, self, _kickoff)
+
+    def _is_minimize_to_tray_enabled(self) -> bool:
+        if not self._is_windows_platform():
+            return False
+        try:
+            return bool(cfg.get(cfg.minimize_to_tray_on_minimize_windows))
+        except Exception:
+            return False
+
+    def _ensure_tray_icon(self) -> bool:
+        """确保托盘图标已初始化并可用。返回是否可用。"""
+        if not self._is_windows_platform():
+            return False
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return False
+
+        if self._tray_icon is not None:
+            return True
+
+        icon = self.windowIcon()
+        if icon.isNull():
+            icon = QIcon("./app/assets/icons/logo.png")
+
+        tray = QSystemTrayIcon(icon, self)
+        tray.setToolTip(self.windowTitle() or "MFW")
+
+        menu = QMenu()
+        action_show = QAction(self.tr("Show"), self)
+        action_hide = QAction(self.tr("Hide"), self)
+        action_quit = QAction(self.tr("Quit"), self)
+
+        action_show.triggered.connect(self._restore_from_tray)
+        action_hide.triggered.connect(self._hide_to_tray)
+        action_quit.triggered.connect(self.close)
+
+        menu.addAction(action_show)
+        menu.addAction(action_hide)
+        menu.addSeparator()
+        menu.addAction(action_quit)
+
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._on_tray_activated)
+
+        self._tray_icon = tray
+        self._tray_icon.show()
+        return True
+
+    def _dispose_tray_icon(self) -> None:
+        """隐藏并销毁托盘图标（用于关闭开关/退出程序时清理）。"""
+        tray = self._tray_icon
+        if tray is None:
+            return
+        try:
+            tray.hide()
+        except Exception:
+            pass
+        try:
+            tray.deleteLater()
+        except Exception:
+            pass
+        self._tray_icon = None
+
+    def _on_minimize_to_tray_setting_changed(self, value) -> None:
+        # 关闭开关：立刻清理托盘图标
+        try:
+            if not bool(value):
+                self._dispose_tray_icon()
+        except Exception as exc:
+            logger.debug("处理最小化到托盘开关变化失败（已忽略）: %s", exc)
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._restore_from_tray()
+
+    def _hide_to_tray(self) -> None:
+        if not self._ensure_tray_icon():
+            return
+        # 隐藏主窗口（托盘仍保持显示）
+        self.hide()
+
+    def _restore_from_tray(self) -> None:
+        # 还原窗口
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def changeEvent(self, event):
+        """最小化事件：Windows + 开关开启时，最小化改为隐藏到托盘。"""
+        try:
+            if (
+                event.type() == QEvent.Type.WindowStateChange
+                and self._is_minimize_to_tray_enabled()
+                and (self.windowState() & Qt.WindowState.WindowMinimized)
+            ):
+                # 延迟执行，避免和 Qt 自己的状态变更冲突
+                QTimer.singleShot(0, self._hide_to_tray)
+        except Exception as exc:
+            logger.debug("处理最小化到托盘失败（已忽略）: %s", exc)
+
+        super().changeEvent(event)
 
     def _add_bundle_interface_to_navigation(self) -> None:
         """将 BundleInterface 添加到导航栏，并隐藏 Announcement。
@@ -277,7 +591,7 @@ class MainWindow(MSFluentWindow):
         """
         try:
             logger.info("_add_bundle_interface_to_navigation 被调用")
-            
+
             if not hasattr(self, "BundleInterface") or self.BundleInterface is None:
                 logger.warning("BundleInterface 未初始化，无法添加到导航栏")
                 return
@@ -289,19 +603,28 @@ class MainWindow(MSFluentWindow):
 
             logger.info("开始添加 BundleInterface 到导航栏（动态启用多资源适配）...")
             logger.info(f"BundleInterface 对象: {self.BundleInterface}")
-            
+
             # 隐藏 Announcement（如果存在）并禁用其功能
             try:
                 # 禁用公告功能
                 self._announcement_enabled = False
+                # 清理公告运行时状态，确保“彻底关闭”
+                self._announcement_pending_show = False
+                self._announcement_content = {}
+                self._pending_announcement_sections = []
+                self._announcement_signature = ""
+                self._current_welcome_text = ""
                 logger.info("✓ Announcement 功能已禁用")
-                
+
                 # 尝试通过查找导航项并隐藏它
                 # 由于 qfluentwidgets 的 NavigationBar 可能没有直接的隐藏方法，
                 # 我们通过查找对应的导航项并设置其可见性
                 nav_items = getattr(self.navigationInterface, "items", [])
                 for item in nav_items:
-                    if hasattr(item, "routeKey") and item.routeKey == "announcement_button":
+                    if (
+                        hasattr(item, "routeKey")
+                        and item.routeKey == "announcement_button"
+                    ):
                         if hasattr(item, "setVisible"):
                             item.setVisible(False)
                             logger.info("✓ Announcement 已隐藏")
@@ -311,13 +634,15 @@ class MainWindow(MSFluentWindow):
                             logger.info("✓ Announcement 已隐藏")
                             break
             except Exception as hide_exc:
-                logger.debug(f"隐藏 Announcement 时出错（可能不存在或已隐藏）: {hide_exc}")
-            
+                logger.debug(
+                    f"隐藏 Announcement 时出错（可能不存在或已隐藏）: {hide_exc}"
+                )
+
             # 首先确保 BundleInterface 被添加到 stackedWidget
             if self.stackedWidget.indexOf(self.BundleInterface) == -1:
                 self.stackedWidget.addWidget(self.BundleInterface)
                 logger.info("BundleInterface 已添加到 stackedWidget")
-            
+
             # 添加 Bundle 到导航栏（在 Setting 之前）
             # 注意：由于多资源适配开启时公告不会显示，所以直接添加 Bundle 即可
             try:
@@ -327,7 +652,9 @@ class MainWindow(MSFluentWindow):
                     "bundle_interface",
                     FIF.FOLDER,
                     self.tr("Bundle"),
-                    onClick=lambda: self.stackedWidget.setCurrentWidget(self.BundleInterface),
+                    onClick=lambda: self.stackedWidget.setCurrentWidget(
+                        self.BundleInterface
+                    ),
                     selectable=True,
                     position=NavigationItemPosition.BOTTOM,
                 )
@@ -341,12 +668,13 @@ class MainWindow(MSFluentWindow):
                     self.tr("Bundle"),
                     position=NavigationItemPosition.BOTTOM,
                 )
-            
+
             self._bundle_interface_added_to_nav = True
             logger.info("✓ BundleInterface 已成功添加到导航栏！")
         except Exception as exc:
             logger.error(f"添加 BundleInterface 到导航栏失败: {exc}", exc_info=True)
             import traceback
+
             logger.error(f"详细错误信息: {traceback.format_exc()}")
 
     def initWindow(self):
@@ -394,76 +722,162 @@ class MainWindow(MSFluentWindow):
         if title_bar is None:
             return
 
+        # qfluentwidgets 的 TitleBar 在不同版本/不同实现里，布局属性命名可能不同；
+        # 这里做“尽量适配、缺失则降级”的处理，避免直接访问不存在的字段。
         h_layout = getattr(title_bar, "hBoxLayout", None)
-        btn_layout = getattr(title_bar, "buttonLayout", None)
-        v_layout = getattr(title_bar, "vBoxLayout", None)
-        if (
-            not isinstance(h_layout, QHBoxLayout)
-            or not isinstance(btn_layout, QHBoxLayout)
-            or not isinstance(v_layout, QVBoxLayout)
-        ):
+        if not isinstance(h_layout, QHBoxLayout):
+            maybe_layout = title_bar.layout() if hasattr(title_bar, "layout") else None
+            h_layout = maybe_layout if isinstance(maybe_layout, QHBoxLayout) else None
+        if not isinstance(h_layout, QHBoxLayout):
             return
 
+        btn_layout = getattr(title_bar, "buttonLayout", None)
+        v_layout = getattr(title_bar, "vBoxLayout", None)
+
         def _clear_layout(layout):
+            """移除 layout 内所有项（不销毁控件实例本身）。"""
             while layout.count():
                 item = layout.takeAt(0)
-                if item.layout():
-                    _clear_layout(item.layout())
+                if item is None:
+                    continue
+                child_layout = item.layout()
+                child_widget = item.widget()
+                if child_layout:
+                    _clear_layout(child_layout)
+                elif child_widget:
+                    # 从布局中摘出来，后续会重新 addWidget
+                    child_widget.setParent(title_bar)
+
+        # 获取系统按钮（不同版本可能缺少其中某个）
+        buttons = []
+        for name in ("closeBtn", "minBtn", "maxBtn"):
+            btn = getattr(title_bar, name, None)
+            if btn is not None:
+                buttons.append(btn)
+        if not buttons:
+            return
 
         # 调整按钮布局为 macOS 顺序：关闭、最小化、最大化
+        if not isinstance(btn_layout, QHBoxLayout):
+            btn_layout = QHBoxLayout()
         _clear_layout(btn_layout)
-        btn_layout.setContentsMargins(4, 6, 4, 6)
+        # macOS 风格：按钮组距离左侧与顶部/底部会留出一定空隙，不要贴边
+        btn_layout.setContentsMargins(6, 6, 6, 6)
         btn_layout.setSpacing(6)
-        btn_layout.setAlignment(
-            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
-        )
-        for btn in (title_bar.closeBtn, title_bar.minBtn, title_bar.maxBtn):
+        btn_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        # macOS 左侧红黄绿：关闭、最小化、最大化
+        # 如果 objectName 不可靠，就按 close/min/max 的属性名顺序兜底
+        ordered = []
+        for attr in ("closeBtn", "minBtn", "maxBtn"):
+            b = getattr(title_bar, attr, None)
+            if b is not None and b in buttons:
+                ordered.append(b)
+        if not ordered:
+            ordered = buttons
+        for btn in ordered:
             btn_layout.addWidget(btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        # 预留一个与按钮区等宽的占位，确保标题区域真正居中
-        mirror_width = max(
-            btn_layout.sizeHint().width(),
-            title_bar.closeBtn.sizeHint().width()
-            + title_bar.minBtn.sizeHint().width()
-            + title_bar.maxBtn.sizeHint().width()
-            + btn_layout.spacing() * 2
-            + btn_layout.contentsMargins().left()
-            + btn_layout.contentsMargins().right(),
-        )
-        mirror_placeholder = QWidget(title_bar)
-        mirror_placeholder.setFixedWidth(mirror_width)
+        # 把关键对象挂到 title_bar 上，后续 resize/style/font 变化时可重新计算占位宽度
+        setattr(title_bar, "_macos_btn_layout", btn_layout)
+        setattr(title_bar, "_macos_ordered_buttons", ordered)
+
+        mirror_placeholder = getattr(title_bar, "_macos_mirror_placeholder", None)
+        if mirror_placeholder is None:
+            mirror_placeholder = QWidget(title_bar)
+            setattr(title_bar, "_macos_mirror_placeholder", mirror_placeholder)
         mirror_placeholder.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred
         )
 
-        _clear_layout(v_layout)
-        v_layout.setContentsMargins(0, 0, 0, 0)
-        v_layout.setSpacing(0)
-        v_layout.addLayout(btn_layout)
-        v_layout.addStretch(1)
+        def _update_mirror_placeholder_width():
+            """让右侧占位宽度≈左侧按钮区宽度，从而保证 icon+标题真实居中。"""
+            bl = getattr(title_bar, "_macos_btn_layout", None)
+            ph = getattr(title_bar, "_macos_mirror_placeholder", None)
+            ordered_buttons = getattr(title_bar, "_macos_ordered_buttons", None) or []
+            if not isinstance(bl, QHBoxLayout) or ph is None:
+                return
 
-        center_layout = QHBoxLayout()
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(6)
-        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center_layout.addWidget(title_bar.iconLabel, 0, Qt.AlignmentFlag.AlignVCenter)
-        title_bar.titleLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_bar.titleLabel.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        center_layout.addWidget(title_bar.titleLabel, 0, Qt.AlignmentFlag.AlignVCenter)
+            mirror_width = bl.sizeHint().width()
+            try:
+                mirror_width = max(
+                    mirror_width,
+                    sum(b.sizeHint().width() for b in ordered_buttons)
+                    + bl.spacing() * max(0, len(ordered_buttons) - 1)
+                    + bl.contentsMargins().left()
+                    + bl.contentsMargins().right(),
+                )
+            except Exception:
+                pass
 
-        center_widget = QWidget(title_bar)
-        center_widget.setLayout(center_layout)
-        center_widget.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
+            ph.setFixedWidth(max(0, int(mirror_width)))
+
+        # 先更新一次（并延迟到下一轮事件循环再更新一次，确保 sizeHint/layout 已稳定）
+        _update_mirror_placeholder_width()
+        QTimer.singleShot(0, _update_mirror_placeholder_width)
+
+        # 安装一次事件过滤器：窗口大小/DPI/样式/字体变化时保持居中
+        if getattr(title_bar, "_macos_mirror_updater", None) is None:
+            class _MacOSMirrorUpdater(QObject):
+                def eventFilter(self, obj, event):  # noqa: N802
+                    et = event.type()
+                    if et in (
+                        QEvent.Type.Resize,
+                        QEvent.Type.LayoutRequest,
+                        QEvent.Type.StyleChange,
+                        QEvent.Type.FontChange,
+                        QEvent.Type.ScreenChangeInternal,
+                    ):
+                        QTimer.singleShot(0, _update_mirror_placeholder_width)
+                    return False
+
+            updater = _MacOSMirrorUpdater(title_bar)
+            title_bar.installEventFilter(updater)
+            setattr(title_bar, "_macos_mirror_updater", updater)
+
+        # 中间标题区域：尽量使用 titleBar 自带的 iconLabel/titleLabel，缺失则降级
+        icon_label = getattr(title_bar, "iconLabel", None)
+        title_label = getattr(title_bar, "titleLabel", None)
+
+        center_widget = getattr(title_bar, "_macos_center_widget", None)
+        center_layout = getattr(title_bar, "_macos_center_layout", None)
+        if center_widget is None or center_layout is None:
+            center_layout = QHBoxLayout()
+            center_layout.setContentsMargins(0, 0, 0, 0)
+            center_layout.setSpacing(6)
+            center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            center_widget = QWidget(title_bar)
+            center_widget.setLayout(center_layout)
+            center_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            setattr(title_bar, "_macos_center_widget", center_widget)
+            setattr(title_bar, "_macos_center_layout", center_layout)
+        else:
+            _clear_layout(center_layout)
+
+        if icon_label is not None:
+            center_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        if title_label is not None:
+            title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            center_layout.addWidget(title_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         _clear_layout(h_layout)
-        h_layout.setContentsMargins(10, 0, 12, 0)
+        # macOS 风格：标题栏内容整体左右留白更明显一些
+        h_layout.setContentsMargins(12, 0, 12, 0)
         h_layout.setSpacing(8)
         h_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        h_layout.addLayout(v_layout, 0)
+
+        if isinstance(v_layout, QVBoxLayout):
+            _clear_layout(v_layout)
+            v_layout.setContentsMargins(0, 0, 0, 0)
+            v_layout.setSpacing(0)
+            v_layout.addLayout(btn_layout)
+            v_layout.addStretch(1)
+            h_layout.addLayout(v_layout, 0)
+        else:
+            # 老版本/自定义 TitleBar 可能没有 vBoxLayout：直接把按钮布局放到左侧
+            h_layout.addLayout(btn_layout, 0)
+
         h_layout.addStretch(1)
         h_layout.addWidget(center_widget, 0, Qt.AlignmentFlag.AlignCenter)
         h_layout.addStretch(1)
@@ -514,7 +928,7 @@ class MainWindow(MSFluentWindow):
 
     def _apply_background_from_config(self):
         """根据配置加载背景图与透明度。"""
-        if self._background_label is None:
+        if not hasattr(self, "_background_label") or self._background_label is None:
             return
         opacity_value = cfg.get(cfg.background_image_opacity)
         self._apply_background_opacity(opacity_value)
@@ -522,7 +936,7 @@ class MainWindow(MSFluentWindow):
 
     def _apply_background_opacity(self, value: int | float | None):
         """更新背景透明度，传入百分比。"""
-        if self._background_opacity_effect is None:
+        if not hasattr(self, "_background_opacity_effect") or self._background_opacity_effect is None:
             return
         if value is None:
             opacity = 100.0
@@ -536,7 +950,7 @@ class MainWindow(MSFluentWindow):
 
     def _load_background_pixmap(self, path: str | None):
         """加载并应用背景图，若路径为空或无效则隐藏背景。"""
-        if self._background_label is None:
+        if not hasattr(self, "_background_label") or self._background_label is None:
             return
 
         path = str(path or "").strip()
@@ -566,11 +980,11 @@ class MainWindow(MSFluentWindow):
 
     def _update_background_pixmap(self):
         """缩放并填充背景图。"""
-        if self._background_label is None:
+        if not hasattr(self, "_background_label") or self._background_label is None:
             return
 
         self._background_label.setGeometry(self.rect())
-        if not self._background_pixmap_original:
+        if not hasattr(self, "_background_pixmap_original") or not self._background_pixmap_original:
             self._background_label.clear()
             return
 
@@ -584,10 +998,10 @@ class MainWindow(MSFluentWindow):
 
     def _update_background_geometry(self):
         """在窗口尺寸变化时同步背景尺寸。"""
-        if self._background_label is None:
+        if not hasattr(self, "_background_label") or self._background_label is None:
             return
         self._background_label.setGeometry(self.rect())
-        if self._background_pixmap_original:
+        if hasattr(self, "_background_pixmap_original") and self._background_pixmap_original:
             self._update_background_pixmap()
 
     def _on_background_image_changed(self, path: str):
@@ -600,10 +1014,10 @@ class MainWindow(MSFluentWindow):
 
     def _translate_config_error(self, message: str) -> str:
         """翻译配置错误消息
-        
+
         Args:
             message: 英文错误消息
-            
+
         Returns:
             str: 翻译后的消息
         """
@@ -612,28 +1026,41 @@ class MainWindow(MSFluentWindow):
                 # 提取错误详情
                 if "Error details:" in message:
                     error_detail = message.split("Error details:")[-1].strip()
-                    base_msg = self.tr("Config load failed, automatically reset to default. Backup of corrupted config file completed. Error details:")
+                    base_msg = self.tr(
+                        "Config load failed, automatically reset to default. Backup of corrupted config file completed. Error details:"
+                    )
                     return f"{base_msg} {error_detail}"
-                return self.tr("Config load failed, automatically reset to default. Backup of corrupted config file completed.")
+                return self.tr(
+                    "Config load failed, automatically reset to default. Backup of corrupted config file completed."
+                )
             elif "Failed to backup corrupted config file" in message:
                 # 提取错误详情
                 if "Error details:" in message:
                     error_detail = message.split("Error details:")[-1].strip()
-                    base_msg = self.tr("Config load failed, automatically reset to default. Failed to backup corrupted config file. Error details:")
+                    base_msg = self.tr(
+                        "Config load failed, automatically reset to default. Failed to backup corrupted config file. Error details:"
+                    )
                     return f"{base_msg} {error_detail}"
-                return self.tr("Config load failed, automatically reset to default. Failed to backup corrupted config file.")
+                return self.tr(
+                    "Config load failed, automatically reset to default. Failed to backup corrupted config file."
+                )
         elif "Config load failed and error occurred while resetting config" in message:
             error_detail = message.split(":")[-1].strip() if ":" in message else ""
             if error_detail:
-                base_msg = self.tr("Config load failed and error occurred while resetting config:")
+                base_msg = self.tr(
+                    "Config load failed and error occurred while resetting config:"
+                )
                 return f"{base_msg} {error_detail}"
-            return self.tr("Config load failed and error occurred while resetting config.")
+            return self.tr(
+                "Config load failed and error occurred while resetting config."
+            )
         return message
-    
+
     def connectSignalToSlot(self):
         """连接信号到槽函数。"""
         signalBus.micaEnableChanged.connect(self.setMicaEffectEnabled)
         signalBus.title_changed.connect(self.set_title)
+        signalBus.set_window_title.connect(self.setWindowTitle)
         signalBus.info_bar_requested.connect(self.show_info_bar)
         signalBus.request_log_zip.connect(self._on_request_log_zip)
         signalBus.background_image_changed.connect(self._on_background_image_changed)
@@ -645,6 +1072,11 @@ class MainWindow(MSFluentWindow):
             self._on_check_auto_run_after_update_cancel
         )
         signalBus.all_updates_completed.connect(self._on_all_updates_completed)
+        # focus display 渠道信号
+        signalBus.focus_toast.connect(self._on_focus_toast)
+        signalBus.focus_notification.connect(self._on_focus_notification)
+        signalBus.focus_dialog.connect(self._on_focus_dialog)
+        signalBus.focus_modal.connect(self._on_focus_modal)
         # 多资源适配启用后，将 BundleInterface 添加到导航栏
         signalBus.multi_resource_adaptation_enabled.connect(
             self._on_multi_resource_adaptation_enabled
@@ -668,17 +1100,17 @@ class MainWindow(MSFluentWindow):
         """检测全局快捷键权限，如果不可用则禁用设置。"""
         if not getattr(self, "_hotkey_manager", None):
             return
-        
+
         # 检测权限
         has_permission = self._hotkey_manager.check_permission()
-        
+
         # 仅在 macOS/Linux 平台且权限不足时禁用设置
         if sys.platform in ("darwin", "linux") and not has_permission:
             logger.warning("全局快捷键权限不足，已禁用快捷键设置")
-            
+
             # 禁用快捷键设置界面
             self._disable_hotkey_settings()
-    
+
     def _disable_hotkey_settings(self):
         """禁用快捷键设置界面。"""
         try:
@@ -706,56 +1138,456 @@ class MainWindow(MSFluentWindow):
             self._hotkey_manager.reload()
 
     def _on_request_log_zip(self):
-        """处理日志打包请求，避免重复执行。"""
+        """打开日志打包对话框，并在确认后启动后台打包。"""
         if self._log_zip_running:
+            dialog = self._log_zip_dialog
+            if dialog is not None:
+                dialog.raise_()
+                dialog.activateWindow()
             signalBus.info_bar_requested.emit(
                 "warning", self.tr("Log is being packaged, please wait...")
             )
             return
 
+        dialog = LogZipDialog(self, preview_provider=self._build_log_zip_preview)
+        dialog.startRequested.connect(self._start_log_zip_from_dialog)
+        dialog.cancelRequested.connect(self._cancel_log_zip)
+        self._log_zip_dialog = dialog
+        dialog.exec()
+        if self._log_zip_dialog is dialog:
+            self._log_zip_dialog = None
+
+    def _start_log_zip_from_dialog(self, options: LogZipOptions) -> None:
+        """根据用户在对话框中的选择启动日志打包。"""
+        if self._log_zip_running:
+            return
+
+        self._log_zip_running = True
+        self._log_zip_cancel_event = threading.Event()
+        if self._log_zip_dialog is not None:
+            self._log_zip_dialog.set_running(True)
+            self._log_zip_dialog.update_progress(0, 1, self.tr("Preparing files..."))
         self._log_zip_running = True
         signalBus.log_zip_started.emit()
-        self._show_log_zip_progress_infobar()
-        threading.Thread(target=self._generate_log_zip, daemon=True).start()
+        threading.Thread(
+            target=self._generate_log_zip,
+            args=(options,),
+            daemon=True,
+        ).start()
 
-    def _generate_log_zip(self):
-        """将 debug 目录打包为 zip，并兼容被占用的日志文件。"""
+    def _cancel_log_zip(self) -> None:
+        """请求取消当前日志打包。"""
+        cancel_event = self._log_zip_cancel_event
+        if cancel_event is not None:
+            cancel_event.set()
+        if self._log_zip_dialog is not None:
+            self._log_zip_dialog.mark_cancelling()
+
+    def _generate_log_zip(self, options: LogZipOptions):
+        """根据用户选择打包 debug 目录内容，并支持取消。"""
         debug_dir = Path.cwd() / "debug"
         if not debug_dir.exists() or not debug_dir.is_dir():
-            self._close_log_zip_progress()
+            self._set_log_zip_dialog_finished(
+                self.tr("Debug directory not found, cannot package logs."),
+                error=True,
+            )
             signalBus.info_bar_requested.emit(
                 "error", self.tr("Debug directory not found, cannot package logs.")
             )
             self._log_zip_running = False
+            self._log_zip_cancel_event = None
             signalBus.log_zip_finished.emit()
             return
 
         zip_path = self._build_log_zip_path()
         errors: list[str] = []
+        cancel_event = self._log_zip_cancel_event or threading.Event()
         try:
-            with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                for file_path in debug_dir.rglob("*"):
-                    if file_path.is_dir():
-                        continue
-                    arcname = f"{debug_dir.name}/{file_path.relative_to(debug_dir).as_posix()}"
-                    if file_path.name in self._LOCKED_LOG_NAMES:
-                        self._write_locked_log(zf, file_path, arcname, errors)
-                    else:
-                        self._write_file_to_zip(zf, file_path, arcname, errors)
+            file_entries, live_entries = self._collect_log_zip_entries(debug_dir, options)
+            total_items = len(file_entries) + len(live_entries)
+            if total_items <= 0:
+                self._set_log_zip_dialog_finished(
+                    self.tr("No matching files were found for the selected options."),
+                    error=True,
+                )
+                signalBus.info_bar_requested.emit(
+                    "warning",
+                    self.tr("No matching files were found for the selected options."),
+                )
+                return
 
-            self._close_log_zip_progress()
+            self._update_log_zip_dialog_progress(0, total_items, self.tr("Preparing files..."))
+            processed = 0
+            with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for entry in file_entries:
+                    if cancel_event.is_set():
+                        raise LogZipCancelled()
+                    self._update_log_zip_dialog_progress(
+                        processed,
+                        total_items,
+                        self.tr("Packing:") + f" {entry.path.name}",
+                    )
+                    if entry.locked:
+                        self._write_locked_log(zf, entry.path, entry.arcname, errors, cancel_event)
+                    else:
+                        self._write_file_to_zip(zf, entry.path, entry.arcname, errors, cancel_event)
+                    processed += 1
+                    self._update_log_zip_dialog_progress(processed, total_items)
+
+                for entry in live_entries:
+                    if cancel_event.is_set():
+                        raise LogZipCancelled()
+                    self._update_log_zip_dialog_progress(
+                        processed,
+                        total_items,
+                        self.tr("Packing:") + f" {Path(entry.arcname).name}",
+                    )
+                    zf.writestr(entry.arcname, entry.image_bytes)
+                    processed += 1
+                    self._update_log_zip_dialog_progress(processed, total_items)
+
+            message = self._build_log_zip_result_message(zip_path, errors)
+            self._set_log_zip_dialog_finished(message, error=False)
             self._notify_log_zip_result(zip_path, errors)
             self._open_debug_dir(debug_dir)
             logger.info(" 日志压缩包生成完成：%s", zip_path)
+        except LogZipCancelled:
+            logger.info("日志打包已取消")
+            try:
+                if zip_path.exists():
+                    zip_path.unlink()
+            except Exception as exc:
+                logger.warning("取消后删除未完成压缩包失败：%s", exc)
+            self._set_log_zip_dialog_finished(self.tr("Log packaging cancelled."), error=False)
+            signalBus.info_bar_requested.emit("warning", self.tr("Log packaging cancelled."))
         except Exception as exc:
             logger.exception("生成日志压缩包失败")
-            self._close_log_zip_progress()
+            self._set_log_zip_dialog_finished(
+                self.tr("Log packaging failed:") + str(exc),
+                error=True,
+            )
             signalBus.info_bar_requested.emit(
                 "error", self.tr("Log packaging failed:") + str(exc)
             )
         finally:
             self._log_zip_running = False
+            self._log_zip_cancel_event = None
             signalBus.log_zip_finished.emit()
+
+    def _collect_log_zip_entries(
+        self,
+        debug_dir: Path,
+        options: LogZipOptions,
+    ) -> tuple[list[LogZipFileEntry], list[LogZipLiveEntry]]:
+        """按用户选择生成待打包文件列表。"""
+        seen: set[Path] = set()
+        file_entries: list[LogZipFileEntry] = []
+
+        def _add_file(path: Path, category: str) -> None:
+            resolved = path.resolve()
+            if resolved in seen or not path.is_file():
+                return
+            seen.add(resolved)
+            rel_path = path.relative_to(debug_dir).as_posix()
+            file_entries.append(
+                LogZipFileEntry(
+                    path=path,
+                    arcname=f"{debug_dir.name}/{rel_path}",
+                    locked=path.name in self._LOCKED_LOG_NAMES,
+                    category=category,
+                )
+            )
+
+        for path in sorted(debug_dir.iterdir(), key=lambda item: item.name.lower()):
+            if not path.is_file():
+                continue
+            if options.include_maa_logs and self._is_maa_log_file(path.name):
+                _add_file(path, "maa_logs")
+            if options.include_gui_logs and self._is_gui_log_file(path.name):
+                _add_file(path, "gui_logs")
+            if options.include_custom_logs and self._is_custom_log_file(path.name):
+                _add_file(path, "custom_logs")
+
+        if options.include_other_files:
+            self._collect_other_files(debug_dir, seen, file_entries)
+
+        if options.include_on_error_images:
+            self._collect_image_files(
+                debug_dir / "on_error",
+                debug_dir,
+                options.on_error_days,
+                seen,
+                file_entries,
+                "on_error_images",
+            )
+
+        if options.include_vision_images:
+            self._collect_image_files(
+                debug_dir / "vision",
+                debug_dir,
+                options.vision_days,
+                seen,
+                file_entries,
+                "vision_images",
+            )
+
+        if options.include_other_images:
+            self._collect_other_image_files(
+                debug_dir,
+                options.other_images_days,
+                seen,
+                file_entries,
+                "other_images",
+            )
+
+        live_entries = self._collect_live_images_for_zip(options) if options.include_other_images else []
+        return file_entries, live_entries
+
+    def _collect_image_files(
+        self,
+        folder: Path,
+        debug_dir: Path,
+        days: int | None,
+        seen: set[Path],
+        output: list[LogZipFileEntry],
+        category: str,
+    ) -> None:
+        if not folder.exists() or not folder.is_dir():
+            return
+        cutoff = self._build_image_cutoff(days)
+        for path in sorted(folder.rglob("*"), key=lambda item: str(item).lower()):
+            if not path.is_file() or path.suffix.lower() not in self._IMAGE_SUFFIXES:
+                continue
+            if cutoff is not None and datetime.fromtimestamp(path.stat().st_mtime) < cutoff:
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            output.append(
+                LogZipFileEntry(
+                    path=path,
+                    arcname=f"{debug_dir.name}/{path.relative_to(debug_dir).as_posix()}",
+                    locked=False,
+                    category=category,
+                )
+            )
+
+    def _collect_other_image_files(
+        self,
+        debug_dir: Path,
+        days: int | None,
+        seen: set[Path],
+        output: list[LogZipFileEntry],
+        category: str,
+    ) -> None:
+        cutoff = self._build_image_cutoff(days)
+        excluded_roots = {"on_error", "vision"}
+        for path in sorted(debug_dir.rglob("*"), key=lambda item: str(item).lower()):
+            if not path.is_file() or path.suffix.lower() not in self._IMAGE_SUFFIXES:
+                continue
+            parts = path.relative_to(debug_dir).parts
+            if parts and parts[0] in excluded_roots:
+                continue
+            if cutoff is not None and datetime.fromtimestamp(path.stat().st_mtime) < cutoff:
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            output.append(
+                LogZipFileEntry(
+                    path=path,
+                    arcname=f"{debug_dir.name}/{path.relative_to(debug_dir).as_posix()}",
+                    locked=False,
+                    category=category,
+                )
+            )
+
+    def _collect_other_files(
+        self,
+        debug_dir: Path,
+        seen: set[Path],
+        output: list[LogZipFileEntry],
+    ) -> None:
+        for path in sorted(debug_dir.rglob("*"), key=lambda item: str(item).lower()):
+            if not path.is_file():
+                continue
+            if path.name.lower() == "debug.zip":
+                continue
+            if path.suffix.lower() in self._IMAGE_SUFFIXES:
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            output.append(
+                LogZipFileEntry(
+                    path=path,
+                    arcname=f"{debug_dir.name}/{path.relative_to(debug_dir).as_posix()}",
+                    locked=path.name in self._LOCKED_LOG_NAMES,
+                    category="other_files",
+                )
+            )
+
+    def _collect_live_images_for_zip(self, options: LogZipOptions) -> list[LogZipLiveEntry]:
+        """收集日志面板中的实时图片，归入“其他图片”。"""
+        try:
+            log_widget = getattr(
+                getattr(self, "TaskInterface", None), "log_output_widget", None
+            )
+            if not log_widget or not hasattr(log_widget, "collect_log_images"):
+                return []
+
+            image_map = log_widget.collect_log_images()
+            if not image_map:
+                return []
+
+            log_items = getattr(log_widget, "_log_items", [])
+            timestamps = []
+            task_names = []
+            for item in log_items:
+                data = getattr(item, "_data", None)
+                if data is None:
+                    timestamps.append(datetime.now().strftime("%H_%M_%S"))
+                    task_names.append("Unknown")
+                    continue
+                timestamps.append((data.timestamp or datetime.now().strftime("%H:%M:%S")).replace(":", "_"))
+                task_names.append(self._sanitize_archive_name(data.task_name or "Unknown"))
+
+            entries: list[LogZipLiveEntry] = []
+            for _, (image_bytes, indices) in image_map.items():
+                if not image_bytes or image_bytes.isEmpty() or not indices:
+                    continue
+                min_idx = min(indices)
+                max_idx = max(indices)
+                timestamp_str = timestamps[min_idx] if min_idx < len(timestamps) else datetime.now().strftime("%H_%M_%S")
+                task_name = task_names[min_idx] if min_idx < len(task_names) else "Unknown"
+                if len(indices) == 1:
+                    filename = f"{min_idx:04d}_{task_name}_{timestamp_str}.png"
+                else:
+                    filename = f"{min_idx:04d}_[{min_idx:04d}-{max_idx:04d}]_{task_name}_{timestamp_str}.png"
+                entries.append(
+                    LogZipLiveEntry(
+                        arcname=f"debug/live/{filename}",
+                        image_bytes=image_bytes.data(),
+                    )
+                )
+            return entries
+        except Exception as exc:
+            logger.exception("收集实时图片失败")
+            return []
+
+    def _build_image_cutoff(self, days: int | None) -> datetime | None:
+        if days is None:
+            return None
+        now = datetime.now()
+        if days <= 1:
+            return datetime(now.year, now.month, now.day)
+        return now - timedelta(days=days)
+
+    def _is_maa_log_file(self, name: str) -> bool:
+        lowered = name.lower()
+        return lowered in {
+            "maa.log",
+            "maa.log.bak",
+            "maa.bak.log",
+            "maafw.log",
+            "maafw.log.bak",
+        }
+
+    def _is_gui_log_file(self, name: str) -> bool:
+        lowered = name.lower()
+        return lowered == "gui.log" or lowered.startswith("gui.log.")
+
+    def _is_custom_log_file(self, name: str) -> bool:
+        lowered = name.lower()
+        return lowered == "custom.log" or lowered.startswith("custom_")
+
+    def _build_log_zip_preview(self, options: LogZipOptions) -> LogZipPreview:
+        debug_dir = Path.cwd() / "debug"
+        if not debug_dir.exists() or not debug_dir.is_dir():
+            return LogZipPreview()
+
+        file_entries, live_entries = self._collect_log_zip_entries(debug_dir, options)
+        preview = LogZipPreview()
+
+        for entry in file_entries:
+            try:
+                size = entry.path.stat().st_size
+            except OSError:
+                size = 0
+            if entry.category == "maa_logs":
+                preview.maa_logs_size += size
+            elif entry.category == "gui_logs":
+                preview.gui_logs_size += size
+            elif entry.category == "custom_logs":
+                preview.custom_logs_size += size
+            elif entry.category == "other_files":
+                preview.other_files_size += size
+            elif entry.category == "on_error_images":
+                preview.on_error_images_size += size
+            elif entry.category == "vision_images":
+                preview.vision_images_size += size
+            elif entry.category == "other_images":
+                preview.other_images_size += size
+
+        preview.other_images_size += sum(len(entry.image_bytes) for entry in live_entries)
+        preview.total_size = (
+            preview.maa_logs_size
+            + preview.gui_logs_size
+            + preview.custom_logs_size
+            + preview.other_files_size
+            + preview.on_error_images_size
+            + preview.vision_images_size
+            + preview.other_images_size
+        )
+        return preview
+
+    def _sanitize_archive_name(self, text: str) -> str:
+        safe = "".join("_" if ch in '<>:"/\\|?*' else ch for ch in text.strip())
+        safe = safe.replace(" ", "_")
+        return safe or "Unknown"
+
+    def _cleanup_old_files(self, debug_dir: Path) -> None:
+        """清理debug目录中的旧文件。
+
+        - on_error文件夹内的文件，只保留三天内的
+        - vision文件夹内的文件，只保留一天内的
+        """
+        now = datetime.now()
+        three_days_ago = now - timedelta(days=3)
+        one_day_ago = now - timedelta(days=1)
+
+        # 清理 on_error 文件夹内的文件（保留三天内的）
+        on_error_dir = debug_dir / "on_error"
+        if on_error_dir.exists() and on_error_dir.is_dir():
+            for file_path in on_error_dir.iterdir():
+                if file_path.is_file():
+                    try:
+                        # 获取文件的修改时间
+                        mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                        if mtime < three_days_ago:
+                            file_path.unlink()
+                            logger.info(
+                                f"删除过期文件（on_error，超过3天）：{file_path}"
+                            )
+                    except Exception as exc:
+                        logger.warning(f"清理on_error文件失败：{file_path} ({exc})")
+
+        # 清理 vision 文件夹内的文件（保留一天内的）
+        vision_dir = debug_dir / "vision"
+        if vision_dir.exists() and vision_dir.is_dir():
+            for file_path in vision_dir.iterdir():
+                if file_path.is_file():
+                    try:
+                        # 获取文件的修改时间
+                        mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                        if mtime < one_day_ago:
+                            file_path.unlink()
+                            logger.info(f"删除过期文件（vision，超过1天）：{file_path}")
+                    except Exception as exc:
+                        logger.warning(f"清理vision文件失败：{file_path} ({exc})")
 
     def _write_locked_log(
         self,
@@ -763,11 +1595,62 @@ class MainWindow(MSFluentWindow):
         file_path: Path,
         arcname: str,
         errors: list[str],
+        cancel_event: threading.Event | None = None,
     ) -> None:
-        """直接读取被占用的日志文件内容后写入压缩包。"""
+        """读取可能被占用的日志文件并写入压缩包。
+
+        对 maa/maafw 日志（含 .bak）做大小判断：
+        - 小于约 100MB：完整保存
+        - 大于约 100MB：仅保留末尾约 100MB 的内容，并尽量按行对齐（从下一行开始截取）
+        其他被占用日志（如 clash.log）仍然完整读取。
+        """
+        # 针对 maa/maafw 日志做“只保留末尾 100MB”的特殊处理
+        SPECIAL_TAIL_LOGS = {
+            "maa.log",
+            "maafw.log",
+            "maa.bak.log",
+            "maa.log.bak",
+            "maafw.log.bak",
+        }
+        MAX_TAIL_BYTES = 100 * 1024 * 1024  # 约 100MB
+
         try:
-            data = file_path.read_bytes()
-            zip_file.writestr(arcname, data)
+            if file_path.name in SPECIAL_TAIL_LOGS:
+                try:
+                    file_size = file_path.stat().st_size
+                except OSError:
+                    # 获取大小失败时，回退为完整读取
+                    data = file_path.read_bytes()
+                    zip_file.writestr(arcname, data)
+                    return
+
+                # 小于等于 100MB：直接完整保存
+                if file_size <= MAX_TAIL_BYTES:
+                    with file_path.open("rb") as src, zip_file.open(arcname, "w") as dest:
+                        self._copy_stream_with_cancel(src, dest, cancel_event)
+                    return
+
+                # 大于 100MB：只保留末尾约 100MB，并按行对齐
+                with file_path.open("rb") as f:
+                    # 从文件末尾回退 MAX_TAIL_BYTES
+                    start_pos = max(0, file_size - MAX_TAIL_BYTES)
+                    f.seek(start_pos)
+                    tail = f.read(MAX_TAIL_BYTES)
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise LogZipCancelled()
+
+                # 为了“按行数保存”，从第一个换行符之后开始，避免半行
+                newline_index = tail.find(b"\n")
+                if newline_index != -1:
+                    tail = tail[newline_index + 1 :]
+
+                zip_file.writestr(arcname, tail)
+            else:
+                # 其他被占用日志（如 clash.log）仍然尝试完整读取
+                with file_path.open("rb") as src, zip_file.open(arcname, "w") as dest:
+                    self._copy_stream_with_cancel(src, dest, cancel_event)
+        except LogZipCancelled:
+            raise
         except Exception as exc:
             errors.append(f"{arcname} ({exc})")
             logger.warning(" 读取占用日志失败：%s (%s)", file_path, exc)
@@ -778,14 +1661,112 @@ class MainWindow(MSFluentWindow):
         file_path: Path,
         arcname: str,
         errors: list[str],
+        cancel_event: threading.Event | None = None,
     ) -> None:
         """流式复制文件到压缩包，单个文件出错不影响整体。"""
         try:
             with file_path.open("rb") as src, zip_file.open(arcname, "w") as dest:
-                shutil.copyfileobj(src, dest, length=1024 * 512)
+                self._copy_stream_with_cancel(src, dest, cancel_event)
+        except LogZipCancelled:
+            raise
         except Exception as exc:
             errors.append(f"{arcname} ({exc})")
             logger.warning(" 添加日志文件失败：%s (%s)", file_path, exc)
+
+    def _copy_stream_with_cancel(self, src, dest, cancel_event: threading.Event | None) -> None:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise LogZipCancelled()
+            chunk = src.read(1024 * 512)
+            if not chunk:
+                break
+            dest.write(chunk)
+
+    def _save_log_images_to_zip(self, zf: zipfile.ZipFile, errors: list[str]) -> None:
+        """将日志组件中的图片保存到压缩包的 live 文件夹中。"""
+        try:
+            # 获取日志组件实例
+            # 检查配置：如果未启用打包图片功能，则跳过
+            if not cfg.get(cfg.log_zip_include_images):
+                logger.debug("日志压缩包图片打包功能已关闭，跳过图片保存")
+                return
+
+            log_widget = getattr(
+                getattr(self, "TaskInterface", None), "log_output_widget", None
+            )
+            if not log_widget or not hasattr(log_widget, "collect_log_images"):
+                return
+
+            # 收集所有图片
+            image_map = log_widget.collect_log_images()
+            if not image_map:
+                return
+
+            # 获取所有日志条目的时间戳和任务名（用于文件名）
+            log_items = getattr(log_widget, "_log_items", [])
+            timestamps = []
+            task_names = []
+            for item in log_items:
+                data = getattr(item, "_data", None)
+                if data:
+                    timestamps.append(data.timestamp)
+                    task_names.append(data.task_name)
+                else:
+                    timestamps.append("")
+                    task_names.append("")
+
+            # 保存每张图片
+            for img_hash, (image_bytes, indices) in image_map.items():
+                if not image_bytes or image_bytes.isEmpty():
+                    continue
+
+                # 生成文件名
+                min_idx = min(indices)
+                max_idx = max(indices)
+
+                # 使用最小索引对应的时间戳和任务名
+                timestamp_str = (
+                    timestamps[min_idx]
+                    if min_idx < len(timestamps)
+                    else datetime.now().strftime("%H%M%S")
+                )
+                # 将时间戳中的冒号替换为下划线（文件名安全）
+                timestamp_str = timestamp_str.replace(":", "_")
+
+                # 获取任务名（如果多条日志共享，使用最小索引的任务名）
+                task_name = (
+                    task_names[min_idx] if min_idx < len(task_names) else "Unknown"
+                )
+                # 清理任务名中的文件名不安全字符（替换为下划线）
+                import re
+
+                safe_task_name = re.sub(r'[<>:"/\\|?*]', "_", task_name).strip()
+                safe_task_name = safe_task_name.replace(" ", "_")  # 空格也替换为下划线
+                if not safe_task_name:
+                    safe_task_name = "Unknown"
+
+                if len(indices) == 1:
+                    # 单条日志：序号+任务名+时间
+                    filename = f"{min_idx:04d}_{safe_task_name}_{timestamp_str}.jpg"
+                else:
+                    # 多条日志共享：最小序号+[最小序号-最大序号]+任务名+时间
+                    filename = f"{min_idx:04d}_[{min_idx:04d}-{max_idx:04d}]_{safe_task_name}_{timestamp_str}.jpg"
+
+                arcname = f"{Path('debug').name}/live/{filename}"
+
+                # 写入压缩包
+                try:
+                    raw_bytes = image_bytes.data()
+                    zf.writestr(arcname, raw_bytes)
+                    logger.debug(
+                        f"已保存日志图片到压缩包: {arcname} (绑定 {len(indices)} 条日志)"
+                    )
+                except Exception as exc:
+                    errors.append(f"{arcname} ({exc})")
+                    logger.warning(f"保存日志图片失败：{arcname} ({exc})")
+        except Exception as exc:
+            logger.exception("保存日志图片到压缩包时出错")
+            errors.append(f"live/图片保存失败 ({exc})")
 
     def _build_log_zip_path(self) -> Path:
         """生成日志压缩包路径（放在 debug 目录内），如已存在则删除后重建。"""
@@ -822,32 +1803,37 @@ class MainWindow(MSFluentWindow):
             "info", self.tr("Log has been packaged:") + str(zip_path.resolve())
         )
 
-    def _show_log_zip_progress_infobar(self):
-        """显示“正在压缩”提示。"""
-        self._close_log_zip_progress()
-        bar = InfoBar.info(
-            title=self.tr("Packing logs"),
-            content=self.tr("Please wait..."),
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP_RIGHT,
-            duration=-1,
-            parent=self,
-        )
-        self._log_zip_infobar = bar
+    def _build_log_zip_result_message(self, zip_path: Path, errors: list[str]) -> str:
+        if errors:
+            return self.tr("Packaging completed, but some files were skipped.")
+        return self.tr("Packaging completed:") + str(zip_path.resolve())
 
-    def _close_log_zip_progress(self):
-        """关闭进度 InfoBar（切回主线程执行）。"""
-        bar = self._log_zip_infobar
-        if not bar:
+    def _update_log_zip_dialog_progress(
+        self,
+        current: int,
+        total: int,
+        message: str | None = None,
+    ) -> None:
+        dialog = self._log_zip_dialog
+        if dialog is None:
             return
 
-        def _close():
-            if bar:
-                bar.close()
+        def _update():
+            if self._log_zip_dialog is dialog:
+                dialog.update_progress(current, total, message or "")
 
-        self._invoke_in_ui(_close)
-        self._log_zip_infobar = None
+        self._invoke_in_ui(_update)
+
+    def _set_log_zip_dialog_finished(self, message: str, *, error: bool) -> None:
+        dialog = self._log_zip_dialog
+        if dialog is None:
+            return
+
+        def _finish():
+            if self._log_zip_dialog is dialog:
+                dialog.set_finished(message, error=error)
+
+        self._invoke_in_ui(_finish)
 
     def _open_debug_dir(self, debug_dir: Path):
         """压缩完成后打开 debug 目录。"""
@@ -872,16 +1858,155 @@ class MainWindow(MSFluentWindow):
         self._announcement_empty_hint = self.tr(
             "There is no announcement at the moment."
         )
+        self._pending_announcement_sections: list[tuple[str, str]] = []
+        self._announcement_signature = ""
+        self._current_welcome_text = ""
+        self._current_welcome_md5 = ""
 
-        cfg_announcement = cfg.get(cfg.announcement)
-        res_announcement = self.service_coordinator.task.interface.get("welcome", "")
-        self.set_announcement_content(self.tr("Announcement"), res_announcement)
-        # 保存待更新的公告内容，只有在用户关闭对话框时才会更新配置
-        self._pending_announcement_content = res_announcement
-        if cfg_announcement != res_announcement:
+        # 公告功能被禁用时（多资源适配开启），彻底跳过加载/比对/自动弹窗
+        if not getattr(self, "_announcement_enabled", True):
+            self._announcement_pending_show = False
+            return
+
+        self._refresh_announcement_sections()
+        # 启动时根据“总公告签名”比对（welcome + resource/announcement/*.md）决定是否自动弹出
+        if self._announcement_content and self._is_announcement_mismatch():
             # 公告内容不一致，在界面准备好后弹出对话框
             # 注意：此时不更新配置，只有在用户关闭对话框时才更新
             self._announcement_pending_show = True
+
+    def _compute_text_md5(self, text: str) -> str:
+        """计算文本的 MD5（用于 welcome 公告变更判断），为空返回空字符串。"""
+        if not text:
+            return ""
+        return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+    def _get_stored_welcome_md5(self) -> str:
+        """读取已保存的 welcome MD5（不做兼容迁移；用于新存储格式）。"""
+        raw_value = cfg.get(cfg.announcement) or ""
+        if not raw_value:
+            return ""
+
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return ""
+
+        if isinstance(parsed, dict):
+            # 新版：只存 welcome_md5
+            welcome_md5 = parsed.get("welcome_md5") or parsed.get("welcomeMd5")
+            if isinstance(welcome_md5, str) and welcome_md5:
+                return welcome_md5
+            return ""
+
+        return ""
+
+    def _get_stored_announcement_signature(self) -> str:
+        """读取已保存的“总公告签名”，兼容旧版 welcome-only 格式。"""
+        raw_value = cfg.get(cfg.announcement) or ""
+        if not raw_value:
+            return ""
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            # 旧版：直接存 welcome 文本
+            return ""
+        if isinstance(parsed, dict):
+            sig = parsed.get("sig") or parsed.get("signature")
+            return str(sig) if isinstance(sig, str) else ""
+        # 旧版 list/tuple 格式不包含总签名
+        return ""
+
+    def _compute_announcement_signature(self, sections: list[tuple[str, str]]) -> str:
+        """计算公告总内容签名（用于判断是否需要弹窗）。"""
+        try:
+            payload = json.dumps(
+                sections,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        except TypeError:
+            payload = repr(sections)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _get_current_announcement_signature(self) -> str:
+        return getattr(self, "_announcement_signature", "") or ""
+
+    def _is_announcement_mismatch(self) -> bool:
+        """判断当前公告（总内容）是否与已保存记录不一致。"""
+        current_sig = self._get_current_announcement_signature()
+        if not current_sig:
+            return False
+
+        # 本次更新强制弹一次：旧格式没有 welcome_md5，直接判定不一致
+        stored_welcome_md5 = self._get_stored_welcome_md5()
+        if not stored_welcome_md5:
+            return True
+
+        stored_sig = self._get_stored_announcement_signature()
+        if stored_sig:
+            return stored_sig != current_sig
+
+        # 兼容旧版：仅比较 welcome（使用 MD5，不保存 welcome 原文）
+        current_welcome_md5 = getattr(self, "_current_welcome_md5", "") or ""
+        if (
+            stored_welcome_md5
+            and current_welcome_md5
+            and stored_welcome_md5 != current_welcome_md5
+        ):
+            return True
+
+        has_non_welcome_sections = any(
+            title != self.tr("Welcome")
+            for title, _ in (self._pending_announcement_sections or [])
+        )
+        return bool(has_non_welcome_sections)
+
+    def _refresh_announcement_sections(self) -> None:
+        """重新读取欢迎信息和 resource/announcement.md，更新公告内容。"""
+        welcome_content = self.service_coordinator.task.interface.get("welcome", "")
+        sections: list[tuple[str, str]] = []
+        if welcome_content:
+            sections.append((self.tr("Welcome"), welcome_content))
+        sections.extend(self._load_resource_announcements())
+        if sections:
+            ordered_content = OrderedDict((title, body) for title, body in sections)
+            self.set_announcement_content(self._announcement_title, ordered_content)
+        else:
+            self.set_announcement_content(self._announcement_title, {})
+        self._pending_announcement_sections = sections
+        self._announcement_signature = self._compute_announcement_signature(sections)
+        self._current_welcome_text = welcome_content
+        self._current_welcome_md5 = self._compute_text_md5(welcome_content or "")
+
+    def _load_resource_announcements(self) -> list[tuple[str, str]]:
+        """按名称顺序读取 resource/announcement 目录下的 Markdown 文件。"""
+        announcement_dir = Path.cwd() / "resource" / "announcement"
+        if not announcement_dir.is_dir():
+            return []
+        sections = []
+        for file_path in sorted(announcement_dir.glob("*.md")):
+            try:
+                raw_text = file_path.read_text(encoding="utf-8")
+            except Exception:
+                logger.warning("加载公告文件失败: %s", file_path)
+                continue
+            content = raw_text.strip()
+            if not content:
+                continue
+            title = self._extract_markdown_title(content) or file_path.stem
+            sections.append((title, content))
+        return sections
+
+    def _extract_markdown_title(self, content: str) -> str | None:
+        """从 Markdown 内容中提取第一个标题，作为章节名称。"""
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                title = stripped.lstrip("#").strip()
+                if title:
+                    return title
+        return None
 
     def _insert_announcement_nav_item(self):
         """在设置入口上方插入公告按钮，并挂载点击行为。"""
@@ -897,9 +2022,115 @@ class MainWindow(MSFluentWindow):
 
     def _maybe_show_pending_announcement(self):
         """在主界面完成初始化后延迟展示公告对话框。"""
+        # 公告功能被禁用时（多资源适配开启），彻底跳过自动弹窗与“无公告教程”分支
+        if not getattr(self, "_announcement_enabled", True):
+            return
         if self._announcement_pending_show:
             self._announcement_pending_show = False
-            QTimer.singleShot(0, lambda: self._on_announcement_button_clicked(auto_show=True))
+            QTimer.singleShot(
+                0, lambda: self._on_announcement_button_clicked(auto_show=True)
+            )
+        else:
+            QTimer.singleShot(0, self._maybe_start_tutorial_for_no_announcement)
+
+    def _maybe_start_tutorial_for_no_announcement(self):
+        if self._announcement_content:
+            return
+        self._start_tutorial_sequence()
+
+    def _build_tutorial_steps(self) -> list[TutorialStep]:
+        def get_config_area():
+            task_interface = getattr(self, "TaskInterface", None)
+            return getattr(task_interface, "config_selection", None)
+
+        def get_task_area():
+            task_interface = getattr(self, "TaskInterface", None)
+            return getattr(task_interface, "task_info", None)
+
+        def get_monitor_area():
+            return getattr(self, "MonitorInterface", None)
+
+        def get_log_button():
+            log_widget = getattr(
+                getattr(self, "TaskInterface", None), "log_output_widget", None
+            )
+            return getattr(log_widget, "generate_log_zip_button", None)
+
+        def get_special_button():
+            task_info = getattr(getattr(self, "TaskInterface", None), "task_info", None)
+            return getattr(task_info, "switch_button", None)
+
+        return [
+            TutorialStep(
+                target_getter=get_config_area,
+                message=self.tr(
+                    "This is the configuration area. Each configuration maps to different task sets."
+                ),
+            ),
+            TutorialStep(
+                target_getter=get_task_area,
+                message=self.tr(
+                    "This is the task area. Set the controller and resource configurations first; aside from those two, every task can be dragged to reorder before running."
+                ),
+            ),
+            TutorialStep(
+                target_getter=get_monitor_area,
+                message=self.tr(
+                    "The monitor area displays live footage once tasks are running."
+                ),
+            ),
+            TutorialStep(
+                target_getter=get_log_button,
+                message=self.tr(
+                    "When you encounter issues while running, click this button and send the resulting debug.zip to the developers."
+                ),
+            ),
+            TutorialStep(
+                target_getter=get_special_button,
+                message=self.tr(
+                    "Click this button to switch to special tasks; only tasks marked as special will execute."
+                ),
+            ),
+        ]
+
+    def _start_tutorial_sequence(self):
+        if cfg.get(cfg.special_task_tutorial_shown):
+            return
+        if self._tutorial_overlay:
+            return
+        self._tutorial_steps = self._build_tutorial_steps()
+        self._tutorial_index = 0
+        self._show_next_tutorial_step()
+
+    def _show_next_tutorial_step(self):
+        while self._tutorial_index < len(self._tutorial_steps):
+            step = self._tutorial_steps[self._tutorial_index]
+            target = step.target_getter()
+            if not target or not target.isVisible():
+                self._tutorial_index += 1
+                continue
+            overlay = TutorialHighlightOverlay(self, target)
+            overlay.set_message(step.message)
+            overlay.closed.connect(self._on_tutorial_overlay_closed)
+            overlay.show()
+            self._tutorial_overlay = overlay
+            logger.info("展示教程步骤: %s", step.message)
+            return
+        self._complete_tutorial_sequence()
+
+    def _on_tutorial_overlay_closed(self):
+        self._tutorial_overlay = None
+        self._tutorial_index += 1
+        self._show_next_tutorial_step()
+
+    def _complete_tutorial_sequence(self):
+        if cfg.get(cfg.special_task_tutorial_shown):
+            return
+        cfg.set(cfg.special_task_tutorial_shown, True)
+        logger.info("所有教程步骤已完成，配置已记录")
+
+    def _on_announcement_closed(self):
+        QTimer.singleShot(0, self._start_tutorial_sequence)
 
     def _bootstrap_auto_update_and_run(self) -> None:
         """启动自动更新并串行等待，更新后再执行自动任务。"""
@@ -926,7 +2157,9 @@ class MainWindow(MSFluentWindow):
 
         setting_interface = getattr(self, "SettingInterface", None)
         if not self.service_coordinator or setting_interface is None:
-            logger.warning("自动更新未启动：更新器未就绪，改为检查并执行 bundle 自动更新")
+            logger.warning(
+                "自动更新未启动：更新器未就绪，改为检查并执行 bundle 自动更新"
+            )
             # UI 自动更新无法启动时，直接进入 bundle 自动更新阶段
             self._check_and_start_bundle_update()
             return
@@ -999,7 +2232,7 @@ class MainWindow(MSFluentWindow):
             self._setting_update_completed,
             self._bundle_update_in_progress,
         )
-        
+
         # 判断是设置更新还是 bundle 更新
         if self._auto_update_in_progress and not self._bundle_update_in_progress:
             # 这是设置更新完成
@@ -1007,7 +2240,7 @@ class MainWindow(MSFluentWindow):
             self._setting_update_completed = True
             self._auto_update_in_progress = False
             self._auto_update_thread = None
-            
+
             if status == 1:
                 # 热更新完成后，重新设置窗口标题（延迟到下一个事件循环，确保 reinit 完成）
                 QTimer.singleShot(0, self.set_title)
@@ -1031,18 +2264,18 @@ class MainWindow(MSFluentWindow):
                 else:
                     logger.warning("SettingInterface 不存在，无法触发立即更新提示")
                 return
-            
+
             # 其他 status，检查是否需要启动 bundle 更新
             self._check_and_start_bundle_update()
             return
-        
+
         if self._bundle_update_in_progress:
             # 这是 bundle 更新完成（单个bundle）
             logger.info("Bundle 更新完成（单个），status=%s", status)
             # 注意：所有bundle更新完成信号由 bundle_interface 的 _start_next_update 发送
             # 这里不需要发送 all_updates_completed 信号
             return
-        
+
         # 其他情况（可能是手动触发的更新）
         self._auto_update_in_progress = False
         self._auto_update_thread = None
@@ -1072,12 +2305,12 @@ class MainWindow(MSFluentWindow):
         if self._pending_auto_run:
             self._schedule_auto_run()
         self._pending_auto_run = False
-    
+
     def _check_and_start_bundle_update(self):
         """检查并启动 bundle 更新"""
         # 检查 bundle 自动更新是否开启
         bundle_auto_update_enabled = cfg.get(cfg.bundle_auto_update)
-        
+
         if not bundle_auto_update_enabled:
             logger.info("Bundle 自动更新未开启，直接发送所有更新完成信号")
             signalBus.all_updates_completed.emit()
@@ -1086,7 +2319,7 @@ class MainWindow(MSFluentWindow):
                 self._schedule_auto_run()
             self._pending_auto_run = False
             return
-        
+
         # 检查是否有 bundle 需要更新
         bundle_interface = getattr(self, "BundleInterface", None)
         if not bundle_interface:
@@ -1096,7 +2329,7 @@ class MainWindow(MSFluentWindow):
                 self._schedule_auto_run()
             self._pending_auto_run = False
             return
-        
+
         # 启动 bundle 自动更新
         logger.info("Bundle 自动更新已开启，开始更新所有 bundle")
         self._bundle_update_in_progress = True
@@ -1109,7 +2342,7 @@ class MainWindow(MSFluentWindow):
             if self._pending_auto_run:
                 self._schedule_auto_run()
             self._pending_auto_run = False
-    
+
     def _on_all_updates_completed(self):
         """所有更新完成回调"""
         logger.info("收到所有更新完成信号")
@@ -1127,7 +2360,7 @@ class MainWindow(MSFluentWindow):
 
     def _on_announcement_button_clicked(self, auto_show: bool = False):
         """处理公告按钮点击，弹出公告对话框或提示无内容。
-        
+
         Args:
             auto_show: 如果为 True，表示是通过方法自动唤醒的（第一次打开或公告更新），
                       将使用带延迟关闭功能的对话框；如果为 False，表示用户手动点击，
@@ -1136,20 +2369,16 @@ class MainWindow(MSFluentWindow):
         # 如果公告功能被禁用，直接返回
         if not getattr(self, "_announcement_enabled", True):
             return
-        
+
+        self._refresh_announcement_sections()
+
         if not self._announcement_content:
             self.show_info_bar("info", self._announcement_empty_hint)
             return
 
-        # 检查当前记录的公告和当前运行的公告是否一致
-        cfg_announcement = cfg.get(cfg.announcement)
-        res_announcement = getattr(self, "_pending_announcement_content", "")
-        if not res_announcement:
-            res_announcement = self.service_coordinator.task.interface.get("welcome", "")
-        
-        # 只有当公告内容不一致时，才需要5秒延迟
-        announcement_mismatch = cfg_announcement != res_announcement
-        
+        # 检查当前记录的公告与当前运行的“总公告内容”是否一致
+        announcement_mismatch = self._is_announcement_mismatch()
+
         # 根据公告内容是否一致决定使用哪个对话框类
         if announcement_mismatch:
             # 公告内容不一致，使用带延迟关闭功能的对话框
@@ -1166,17 +2395,24 @@ class MainWindow(MSFluentWindow):
                 title=self._announcement_title,
                 content=self._announcement_content,
             )
-        
+
         dialog.button_yes.hide()
         dialog.button_cancel.setText(self.tr("Close"))
         result = dialog.exec()
-        
+
         # 只有在公告内容不一致且用户关闭对话框时，才更新配置
         # 这样如果用户不关闭对话框，下次启动时还会弹出
-        if announcement_mismatch and hasattr(self, "_pending_announcement_content"):
+        if announcement_mismatch and self._announcement_content:
             # 用户关闭了对话框，更新配置，下次不会再弹出
-            cfg.set(cfg.announcement, self._pending_announcement_content)
-            logger.info("用户关闭公告对话框，已更新公告配置")
+            payload = {
+                "v": 3,
+                "sig": self._get_current_announcement_signature(),
+                # 不保存 welcome 原文，只保存 md5 用于判断是否变更
+                "welcome_md5": getattr(self, "_current_welcome_md5", "") or "",
+            }
+            cfg.set(cfg.announcement, json.dumps(payload, ensure_ascii=False))
+            logger.info("用户关闭公告对话框，已更新公告配置（总公告签名）")
+        self._on_announcement_closed()
 
     def set_announcement_content(self, title: Optional[str], content) -> None:
         """更新公告数据，外部可以通过调用该方法传入内容。"""
@@ -1242,6 +2478,47 @@ class MainWindow(MSFluentWindow):
         duration = len(message) * 150
         return max(1500, duration)
 
+    def _on_focus_toast(self, message: str):
+        """处理 focus toast 渠道：应用内轻提示，短暂浮现后自动消失"""
+        InfoBar.info(
+            title="",
+            content=message,
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP_RIGHT,
+            duration=self._calculate_info_bar_duration(message),
+            parent=self,
+        )
+
+    def _on_focus_notification(self, message: str):
+        """处理 focus notification 渠道：推送到 OS 通知中心"""
+        if self._ensure_tray_icon() and self._tray_icon is not None:
+            self._tray_icon.showMessage(
+                self.windowTitle() or "MFW",
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+        else:
+            # 降级为 toast
+            self._on_focus_toast(message)
+
+    def _on_focus_dialog(self, message: str):
+        """处理 focus dialog 渠道：非阻塞式对话框，任务在后台继续执行"""
+        from qfluentwidgets import MessageBox
+
+        dialog = MessageBox(self.tr("Info"), message, self)
+        dialog.cancelButton.hide()
+        dialog.show()
+
+    def _on_focus_modal(self, message: str):
+        """处理 focus modal 渠道：阻塞式弹窗，任务暂停等待用户确认"""
+        from qfluentwidgets import MessageBox
+
+        dialog = MessageBox(self.tr("Confirm"), message, self)
+        dialog.cancelButton.hide()
+        dialog.exec()
+
     def is_admin(self):
         """判断是否为管理员权限"""
         if not sys.platform.startswith("win32"):
@@ -1273,7 +2550,14 @@ class MainWindow(MSFluentWindow):
         else:
             title = base_title
 
-        if self.is_admin():
+        # 刷新运行时标记：是否为管理员权限（供其他界面快速读取）
+        try:
+            admin = bool(self.is_admin())
+            cfg.set(cfg.is_admin, admin)
+        except Exception:
+            admin = bool(self.is_admin())
+
+        if admin:
             title += " " + self.tr("admin")
         logger.info(f" 设置窗口标题：{title}")
         self.setWindowTitle(title)
@@ -1284,6 +2568,8 @@ class MainWindow(MSFluentWindow):
         if hasattr(self, "splashScreen"):
             self.splashScreen.resize(self.size())
         self._update_background_geometry()
+        if hasattr(self, "_tutorial_overlay") and self._tutorial_overlay:
+            self._tutorial_overlay.resize(self.size())
 
     def _save_window_geometry_if_needed(self):
         """在关闭时保存当前窗口的位置与大小，用于下次恢复。"""
@@ -1298,6 +2584,9 @@ class MainWindow(MSFluentWindow):
     def closeEvent(self, e):
         """关闭事件"""
         self._save_window_geometry_if_needed()
+
+        # 清理托盘图标，避免 Windows 托盘残影
+        self._dispose_tray_icon()
 
         # Shutdown hotkey manager first to unhook keyboard listeners
         if getattr(self, "_hotkey_manager", None):
@@ -1324,6 +2613,14 @@ class MainWindow(MSFluentWindow):
     def clear_thread_async(self):
         """异步清理线程和资源"""
         send_thread = getattr(self.service_coordinator.task_runner, "send_thread", None)
+        # 兼容：旧版本 task_runner 可能没有暴露 send_thread，这里直接回落到全局单例
+        if send_thread is None:
+            try:
+                from app.utils.notice import send_thread as global_send_thread
+
+                send_thread = global_send_thread
+            except Exception:
+                send_thread = None
         try:
 
             self._clear_maafw_sync()

@@ -5,12 +5,13 @@ Interface 管理器
 
 import jsonc
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Sequence
 from copy import deepcopy
 
 from app.common.config import cfg
 from app.utils.logger import logger
 from app.core.service.i18n_service import I18nService
+from app.utils.custom_builder import build_custom_bundle
 
 
 class InterfaceManager:
@@ -68,14 +69,23 @@ class InterfaceManager:
 
     def _detect_language_from_config(self) -> str:
         """根据全局配置推断语言代码"""
+        # QLocale.name() 多为 BCP47（如 zh_CN）；旧配置或展示名可能为英文描述
         language_map = {
+            "zh_CN": "zh_cn",
             "Chinese (China)": "zh_cn",
-            "Chinese (Hong Kong)": "zh_hk",
+            # 繁体界面语言：QLocale 可能为 zh_HK（香港）或 zh_TW（台湾），interface 统一用 zh_tw
+            "zh_HK": "zh_tw",
+            "Chinese (Hong Kong)": "zh_tw",
+            "zh_TW": "zh_tw",
+            "Chinese (Taiwan)": "zh_tw",
+            "ja_JP": "ja_jp",
+            "Japanese (Japan)": "ja_jp",
+            "en_US": "en_us",
             "English": "en_us",
         }
         qt_locale = cfg.get(cfg.language)
         locale_name = (
-            qt_locale.value.name() if hasattr(qt_locale, "value") else "Chinese (China)"
+            qt_locale.value.name() if hasattr(qt_locale, "value") else "zh_CN"
         )
         return language_map.get(locale_name, "zh_cn")
 
@@ -89,7 +99,7 @@ class InterfaceManager:
 
         Args:
             interface_path: interface 配置文件路径，默认为项目根目录下的 interface.jsonc 或 interface.json
-            language: 语言代码（如 "zh_cn", "en_us", "zh_hk"），默认从配置读取
+            language: 语言代码（如 "zh_cn", "en_us", "zh_tw"），默认从配置读取
         """
         desired_path = self._normalize_interface_path(interface_path)
         if language is not None:
@@ -135,6 +145,12 @@ class InterfaceManager:
             logger.error(f"配置文件格式错误: {e}")
             self._original_interface = {}
             return
+
+        # 解析 import 字段：加载并合并其他 PI 文件中的 task 和 option
+        self._resolve_imports()
+
+        # 检查 agent 嵌入式配置并尝试转换
+        self.apply_agent_customization()
 
         # 设置当前语言
         # 如果未显式传入语言且当前语言为默认值，使用配置推断（兼容旧逻辑）
@@ -188,9 +204,9 @@ class InterfaceManager:
             翻译后的数据
         """
         if isinstance(data, dict):
-            # 递归翻译字典中的每个值
+            # 递归翻译字典中的每个固定值
             for key, value in data.items():
-                # 特殊处理 label, icon, description, title, welcome, contact 等需要翻译的字段
+                # 特殊处理 label, icon, description, title, welcome, contact, "doc", "pattern_msg"等需要翻译的字段
                 if (
                     key
                     in (
@@ -201,22 +217,22 @@ class InterfaceManager:
                         "title",
                         "welcome",
                         "contact",
+                        "doc",
+                        "pattern_msg",
                     )
                     and isinstance(value, str)
                 ):
                     data[key] = self._i18n_service.translate_text(value)
-                else:
+                elif isinstance(value, (dict, list)):
                     data[key] = self._translate_dict(value)
 
         elif isinstance(data, list):
             # 递归翻译列表中的每个元素
             for i, item in enumerate(data):
-                data[i] = self._translate_dict(item)
+                if isinstance(item, (dict, list)):
+                    data[i] = self._translate_dict(item)
 
-        elif isinstance(data, str):
-            # 直接翻译字符串（如果以 $ 开头）
-            return self._i18n_service.translate_text(data)
-
+        # 其他类型不处理，保持原样返回,防止破坏结构
         return data
 
     def _resolve_text_fields_from_files(self, data: Any):
@@ -257,6 +273,78 @@ class InterfaceManager:
                 return f.read()
         except (OSError, UnicodeDecodeError):
             return value
+
+    def _deep_merge_option(
+        self, base: Dict[str, Any], override: Dict[str, Any]
+    ) -> None:
+        """
+        将 override 深度合并到 base（仅合并 option 结构：同键为 dict 则递归，否则 override 覆盖）。
+        """
+        for key, ov_val in override.items():
+            if key not in base:
+                base[key] = deepcopy(ov_val)
+            elif isinstance(base[key], dict) and isinstance(ov_val, dict):
+                self._deep_merge_option(base[key], ov_val)
+            else:
+                base[key] = deepcopy(ov_val)
+
+    def _resolve_imports(self) -> None:
+        """
+        解析 interface 的 import 字段：
+        按顺序加载每个路径对应的 PI 文件，仅合并其中的 task 和 option 到当前配置。
+        路径为相对于 interface 同目录的相对路径。
+        """
+        import_paths = self._original_interface.get("import")
+        if not isinstance(import_paths, list):
+            return
+        to_remove = []
+        for i, item in enumerate(import_paths):
+            if not isinstance(item, str):
+                to_remove.append(i)
+        for i in reversed(to_remove):
+            import_paths.pop(i)
+        if not import_paths:
+            return
+
+        for rel_path in import_paths:
+            path_str = (rel_path or "").strip()
+            if not path_str:
+                continue
+            target = Path(path_str)
+            if not target.is_absolute():
+                target = (self._interface_dir / target).resolve()
+            if not target.exists() or not target.is_file():
+                logger.warning(f"import 文件不存在或不是文件，已跳过: {target}")
+                continue
+            try:
+                with open(target, "r", encoding="utf-8") as f:
+                    imported = jsonc.load(f)
+            except (OSError, UnicodeDecodeError, jsonc.JSONDecodeError) as e:
+                logger.warning(f"加载 import 文件失败 {target}: {e}")
+                continue
+
+            # 仅合并 task、option 和 preset
+            if isinstance(imported.get("task"), list):
+                base_tasks = self._original_interface.setdefault("task", [])
+                if not isinstance(base_tasks, list):
+                    base_tasks = []
+                    self._original_interface["task"] = base_tasks
+                base_tasks.extend(imported["task"])
+            if isinstance(imported.get("option"), dict):
+                base_option = self._original_interface.setdefault("option", {})
+                if not isinstance(base_option, dict):
+                    base_option = {}
+                    self._original_interface["option"] = base_option
+                self._deep_merge_option(base_option, imported["option"])
+            if isinstance(imported.get("preset"), list):
+                base_preset = self._original_interface.setdefault("preset", [])
+                if not isinstance(base_preset, list):
+                    base_preset = []
+                    self._original_interface["preset"] = base_preset
+                base_preset.extend(imported["preset"])
+
+        # 合并完成后移除 import 字段，避免下游误用
+        self._original_interface.pop("import", None)
 
     def _auto_fill_label(self, data: Any):
         """
@@ -300,6 +388,80 @@ class InterfaceManager:
         """
         return self._original_interface
 
+    def apply_agent_customization(self):
+        """
+        若 interface 中 agent 存在且设置了 embedded，则复制入口目录并生成 custom。
+
+        该方法对外公开，供每次更新后调用（无需再检测是否更新）。
+        """
+        self._handle_embedded_agent()
+
+    def _handle_embedded_agent(self):
+        agent_info = self._original_interface.get("agent")
+        if not agent_info:
+            return
+        if not agent_info.get("embedded"):
+            logger.debug("agent 配置中没有 embedded 字段，跳过嵌入式转换")
+            return
+        logger.debug("处理嵌入式 agent")
+
+        child_args = agent_info.get("child_args", [])
+        entry_path = self._resolve_agent_entry(child_args)
+        if entry_path is None:
+            logger.warning("找不到 agent.child_args 指向的启动脚本，跳过嵌入式转换")
+            return
+
+        project_name = (
+            str(
+                self._original_interface.get("name") or self._interface_dir.name
+            ).strip()
+            or "custom"
+        )
+        custom_dir = self._interface_dir / f"{project_name}_custom"
+
+        try:
+            build_custom_bundle(entry_path, custom_dir)
+        except Exception as exc:
+            logger.exception("转换嵌入式 agent 失败: %s", exc)
+            return
+
+        self._original_interface["_agent_backup"] = deepcopy(agent_info)
+        self._original_interface.pop("agent", None)
+
+        # 计算相对于 bundle 目录（_interface_dir）的相对路径
+        custom_relative = custom_dir.relative_to(self._interface_dir) / "custom.json"
+        self._original_interface["custom"] = custom_relative.as_posix()
+
+        # 将修改后的 interface 保存回文件（保存到正确的 bundlepath 位置）
+        if self._interface_path:
+            try:
+                with open(self._interface_path, "w", encoding="utf-8") as f:
+                    jsonc.dump(
+                        self._original_interface, f, indent=4, ensure_ascii=False
+                    )
+                logger.debug(f"已将 custom 字段保存到: {self._interface_path}")
+            except Exception as exc:
+                logger.exception(f"保存 interface 文件失败: {exc}")
+
+    def _resolve_agent_entry(self, child_args: Sequence[Any]) -> Path | None:
+        """
+        解析 agent.child_args 的入口脚本路径（优先前两个参数）。
+        """
+        for idx in range(min(2, len(child_args))):
+            arg = child_args[idx]
+            if not isinstance(arg, str):
+                continue
+            candidate = arg.strip()
+            if not candidate:
+                continue
+            candidate = candidate.replace("{PROJECT_DIR}", str(self._interface_dir))
+            candidate_path = Path(candidate)
+            if not candidate_path.is_absolute():
+                candidate_path = (self._interface_dir / candidate_path).resolve()
+            if candidate_path.exists():
+                return candidate_path
+        return None
+
     def preview_interface(
         self,
         interface_path: Path | str,
@@ -310,7 +472,7 @@ class InterfaceManager:
 
         Args:
             interface_path: 要加载的 interface 配置文件路径（json/jsonc）
-            language: 语言代码（如 "zh_cn", "en_us", "zh_hk"）。如果为 None：
+            language: 语言代码（如 "zh_cn", "en_us", "zh_tw"）。如果为 None：
                 - 若当前尚未初始化且语言为默认值，则按配置自动推断；
                 - 否则使用当前管理器的语言设置。
 
@@ -336,6 +498,8 @@ class InterfaceManager:
             self._interface_dir = path.parent
             with open(path, "r", encoding="utf-8") as f:
                 self._original_interface = jsonc.load(f)
+
+            self._resolve_imports()
 
             # 选择语言（逻辑与 initialize 尽量保持一致）
             if language is not None:
@@ -430,7 +594,7 @@ def get_interface_manager(
 
     Args:
         interface_path: interface 配置文件路径（可为 json/jsonc）
-        language: 语言代码（如 "zh_cn", "en_us", "zh_hk"），默认从配置读取
+        language: 语言代码（如 "zh_cn", "en_us", "zh_tw"），默认从配置读取
 
     Returns:
         InterfaceManager 实例

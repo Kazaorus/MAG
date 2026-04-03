@@ -157,21 +157,20 @@ jobs:
       - name: Install dependencies (Windows ARM64)
         if: matrix.platform == 'win' && matrix.arch == 'aarch64'
         run: |
-          #$env:CRYPTOGRAPHY_DONT_BUILD_RUST=1
-          ## 安装 vcpkg 并获取 OpenSSL（cryptography 依赖）
-          #git clone https://github.com/microsoft/vcpkg.git ${{ github.workspace }}\vcpkg
-          #${{ github.workspace }}\vcpkg\bootstrap-vcpkg.bat
-          #${{ github.workspace }}\vcpkg\vcpkg install openssl:arm64-windows-static-md
-          #$env:OPENSSL_DIR = "${{ github.workspace }}\vcpkg\installed\arm64-windows-static-md"  # 告知 cryptography 依赖位置
+          # 安装 vcpkg 并获取 OpenSSL（cryptography 依赖）
+          git clone https://github.com/microsoft/vcpkg.git ${{ github.workspace }}\vcpkg
+          ${{ github.workspace }}\vcpkg\bootstrap-vcpkg.bat
+          ${{ github.workspace }}\vcpkg\vcpkg install openssl:arm64-windows-static-md
 
-          ## 升级 pip 并安装基础工具
-          #python -m pip install --upgrade pip
-          #python -m pip install setuptools wheel maturin  # maturin 用于 Rust-Python 混合编译
+          $env:VCPKG_ROOT = "${{ github.workspace }}\vcpkg"
+          $env:OPENSSL_DIR = "${{ github.workspace }}\vcpkg\installed\arm64-windows-static-md"  # 告知 cryptography 依赖位置
+          $env:OPENSSL_LIB_DIR = "$env:OPENSSL_DIR\lib"
+          $env:OPENSSL_INCLUDE_DIR = "$env:OPENSSL_DIR\include"
 
-          ## 安装 Rust 工具链并指定 ARM64 目标
-          #curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable-aarch64-pc-windows-msvc
-          #$env:PATH += ";$HOME\.cargo\bin"
-          
+          # 升级 pip 并安装基础工具
+          python -m pip install --upgrade pip
+          python -m pip install setuptools wheel maturin  # maturin 用于 Rust-Python 混合编译
+
           # 安装其他依赖
           python -m pip install pyinstaller
           python -m pip install -r ./requirements.txt
@@ -212,16 +211,10 @@ jobs:
           python ./tools/build.py ${{ matrix.platform }} ${{ matrix.arch }} ${{ needs.meta.outputs.tag }}
         shell: pwsh  
 
-      - name: Download background image
-        shell: bash
-        run: |
-          curl -L -o dist/MFW/background.png "https://ys4fun-prod-pub.oss-cn-hangzhou.aliyuncs.com/game-site/image/abc0d629-faad-493f-81d7-3df181f871d3.png"
-
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MAG-${{ matrix.platform }}-${{ matrix.arch }}
+          name: MFW-PyQt6-${{ matrix.platform }}-${{ matrix.arch }}
           path: "dist/MFW/"
 
 
@@ -249,3 +242,11 @@ jobs:
           body: ${{ needs.changelog.outputs.release_body }}
           draft: false
           prerelease: ${{ needs.meta.outputs.is_prerelease }}
+
+      - name: Trigger MirrorChyanUploading
+        if: github.repository_owner == 'overflow65537'
+        run: |
+          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan
+          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_release_note
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

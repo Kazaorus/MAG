@@ -1,0 +1,82 @@
+{
+    "皮肤活动每日任务": {
+        "next": [
+            "皮肤任务界面",
+            "[JumpBack]关闭待机页面"
+        ]
+    },
+    "皮肤任务界面": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    0,
+                    0,
+                    1920,
+                    1080
+                ],
+                "template": "其他/奇响派对.png"
+            }
+        },
+        "action": "Click",
+        "post_delay": 3000,
+        "next":[
+            "领取皮肤活动奖励",
+            "[JumpBack]皮肤活动_见闻",
+            "[JumpBack]跳过剧情",
+            "直接返回主菜单"
+        ]
+    },
+    "皮肤活动_见闻":{
+        "recognition":{
+            "type":"OCR",
+            "param":{
+                "roi":[26, 641, 177, 58],
+                "expected":[
+                    "见闻"
+                ]
+            }
+        },
+        "action":"Click",
+        "post_wait_freezes":1000
+    },
+    "跳过剧情": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1134,
+                    1,
+                    146,
+                    70
+                ],
+                "expected": [
+                    "跳过"
+                ]
+            }
+        },
+        "action": "Click"
+    },
+    "领取皮肤活动奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    912,
+                    638,
+                    348,
+                    60
+                ],
+                "expected": [
+                    ".+?领取"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes":1000,
+        "next": [
+            "直接返回主菜单",
+            "[JumpBack]关闭奖励通知"
+        ]
+    }
+}
