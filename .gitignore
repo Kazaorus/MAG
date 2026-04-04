@@ -447,6 +447,9 @@ main.dist
 main.build
 dist
 build
+MFW.spec
+MFWUpdater.spec
+
 
 # Tools
 tools/ImageCropper/**/*.png
@@ -461,6 +464,8 @@ MFWUpdater.spec
 update.zip
 k.ey
 .venv
+.cursor
+
 
 # VSC
 .vscode

@@ -24,12 +24,7 @@ from maa.context import Context, ContextEventSink
 from maa.custom_action import CustomAction
 from maa.custom_recognition import CustomRecognition
 
-from maa.controller import (
-    AdbController,
-    Win32Controller,
-    PlayCoverController,
-    GamepadController,
-)
+from maa.controller import AdbController, Win32Controller
 from maa.tasker import Tasker
 from maa.agent_client import AgentClient
 from maa.resource import Resource
@@ -63,10 +58,24 @@ from maa.resource import ResourceEventSink, Resource
 from maa.tasker import TaskerEventSink, Tasker
 from maa.context import ContextEventSink, Context
 
-from app.common.signal_bus import signalBus
+try:
+    from maa.controller import PlayCoverController
+except ImportError:
+    PlayCoverController = None
 
+try:
+    from maa.controller import GamepadController
+except ImportError:
+    GamepadController = None
 
 class MaaContextSink(ContextEventSink):
+    def __init__(self, emit_callback=None):
+        self._emit_callback = emit_callback
+
+    def _emit(self, payload: dict) -> None:
+        if self._emit_callback is not None:
+            self._emit_callback(payload)
+
     def on_raw_notification(self, context: Context, msg: str, details: dict):
         focus_entry = (details.get("focus") or {}).get(msg)
         if not focus_entry:
@@ -96,11 +105,11 @@ class MaaContextSink(ContextEventSink):
         content = content.replace("{task_id}", str(details.get("task_id", "")))
         content = content.replace("{list}", details.get("list", ""))
 
-        signalBus.callback.emit({"name": "context", "details": content, "display": display})
+        self._emit({"name": "context", "details": content, "display": display})
 
         if msg == "Node.Recognition.Succeeded":
             if details.get("Abort", False):
-                signalBus.callback.emit({"name": "abort"})
+                self._emit({"name": "abort"})
             if details.get("Notice", False):
                 pass
 
@@ -130,6 +139,9 @@ class MaaContextSink(ContextEventSink):
 
 
 class MaaControllerEventSink(ControllerEventSink):
+    def __init__(self, emit_callback=None):
+        self._emit_callback = emit_callback
+
     def on_raw_notification(self, controller: Controller, msg: str, details: dict):
         pass
 
@@ -144,6 +156,9 @@ class MaaControllerEventSink(ControllerEventSink):
 
 
 class MaaResourceEventSink(ResourceEventSink):
+    def __init__(self, emit_callback=None):
+        self._emit_callback = emit_callback
+
     def on_raw_notification(self, resource: Resource, msg: str, details: dict):
         pass
 
@@ -153,10 +168,14 @@ class MaaResourceEventSink(ResourceEventSink):
         noti_type: NotificationType,
         detail: ResourceEventSink.ResourceLoadingDetail,
     ):
-        signalBus.callback.emit({"name": "resource", "status": noti_type.value})
+        if self._emit_callback is not None:
+            self._emit_callback({"name": "resource", "status": noti_type.value})
 
 
 class MaaTaskerEventSink(TaskerEventSink):
+    def __init__(self, emit_callback=None):
+        self._emit_callback = emit_callback
+
     def on_raw_notification(self, tasker: Tasker, msg: str, details: dict):
         pass
 
@@ -166,23 +185,17 @@ class MaaTaskerEventSink(TaskerEventSink):
         noti_type: NotificationType,
         detail: TaskerEventSink.TaskerTaskDetail,
     ):
-        signalBus.callback.emit(
-            {"name": "task", "task": detail.entry, "status": noti_type.value}
-        )
-
-
-maa_context_sink = MaaContextSink()
-maa_controller_sink = MaaControllerEventSink()
-maa_resource_sink = MaaResourceEventSink()
-maa_tasker_sink = MaaTaskerEventSink()
+        if self._emit_callback is not None:
+            self._emit_callback(
+                {"name": "task", "task": detail.entry, "status": noti_type.value}
+            )
 
 
 class MaaFW(QObject):
+    callback = Signal(dict)
 
     resource: Resource | None
-    controller: (
-        AdbController | Win32Controller | PlayCoverController | GamepadController | None
-    )
+    controller: Controller | None
     tasker: Tasker | None
     agent: AgentClient | None
 
@@ -215,11 +228,17 @@ class MaaFW(QObject):
         self.controller = None
         self.tasker = None
 
-        # 这里传入的是 Sink 类，需要在此处实例化，避免把类对象/descriptor 直接交给底层 C 接口
-        self.maa_controller_sink = maa_controller_sink
-        self.maa_context_sink = maa_context_sink
-        self.maa_resource_sink = maa_resource_sink
-        self.maa_tasker_sink = maa_tasker_sink
+        # sink 默认绑定到 MaaFW 自身回调信号，供上层按需转发到 UI。
+        self.maa_controller_sink = maa_controller_sink or MaaControllerEventSink(
+            self.callback.emit
+        )
+        self.maa_context_sink = maa_context_sink or MaaContextSink(self.callback.emit)
+        self.maa_resource_sink = maa_resource_sink or MaaResourceEventSink(
+            self.callback.emit
+        )
+        self.maa_tasker_sink = maa_tasker_sink or MaaTaskerEventSink(
+            self.callback.emit
+        )
 
         self.agent = None
         self.agent_thread = None
@@ -580,6 +599,8 @@ class MaaFW(QObject):
 
     @asyncify
     def connect_playcover(self, address: str, uuid: str) -> bool:
+        if PlayCoverController is None:
+            raise RuntimeError("当前安装的 maa 版本不支持 PlayCoverController")
         controller = PlayCoverController(address, uuid)
         controller = self._init_controller(controller)
         connected = controller.post_connection().wait().succeeded
@@ -595,6 +616,8 @@ class MaaFW(QObject):
         gamepad_type: int = MaaGamepadTypeEnum.Xbox360,
         screencap_method: int = MaaWin32ScreencapMethodEnum.DXGI_DesktopDup,
     ) -> bool:
+        if GamepadController is None:
+            raise RuntimeError("当前安装的 maa 版本不支持 GamepadController")
         controller = GamepadController(hwnd, gamepad_type, screencap_method)
         controller = self._init_controller(controller)
         connected = controller.post_connection().wait().succeeded
@@ -603,12 +626,7 @@ class MaaFW(QObject):
             return False
         return True
 
-    def _init_controller(
-        self,
-        controller: (
-            AdbController | Win32Controller | PlayCoverController | GamepadController
-        ),
-    ) -> AdbController | Win32Controller | PlayCoverController | GamepadController:
+    def _init_controller(self, controller: Controller) -> Controller:
         if self.maa_controller_sink:
             controller.add_sink(self.maa_controller_sink)
         self.controller = controller
@@ -766,6 +784,25 @@ class MaaFW(QObject):
 
     @asyncify
     def stop_task(self):
+        self._cleanup_runtime()
+
+    def has_active_runtime(self) -> bool:
+        return any(
+            (
+                self.tasker is not None,
+                self.resource is not None,
+                self.controller is not None,
+                self.agent is not None,
+                self.agent_thread is not None,
+                self.agent_output_thread is not None,
+            )
+        )
+
+    def force_shutdown(self) -> None:
+        """同步强制清理 MaaFW 运行态，供应用退出阶段调用。"""
+        self._cleanup_runtime()
+
+    def _cleanup_runtime(self) -> None:
         if self.tasker:
             try:
                 self.tasker.post_stop().wait()
@@ -773,7 +810,6 @@ class MaaFW(QObject):
                 logger.error(f"停止任务失败: {e}")
             finally:
                 self.tasker = None
-            self.tasker = None
         if self.resource:
             try:
                 self.resource.clear()
@@ -781,16 +817,17 @@ class MaaFW(QObject):
                 logger.error(f"清除资源失败: {e}")
             finally:
                 self.resource = None
-            self.resource = None
+        if self.controller:
+            self.controller = None
         if self.agent:
             try:
                 self.agent.disconnect()
-                self.agent_data_raw = None
             except Exception as e:
                 logger.error(f"断开agent连接失败: {e}")
             finally:
                 self.agent = None
-            self.agent = None
+        self.agent_data_raw = None
+        self.agent_env_vars = {}
         if self.agent_thread:
             try:
                 self.agent_thread.terminate()
@@ -799,6 +836,10 @@ class MaaFW(QObject):
                 except subprocess.TimeoutExpired:
                     logger.warning("等待 agent 终止超时，执行 kill 操作")
                     self.agent_thread.kill()
+                    try:
+                        self.agent_thread.wait(timeout=1)
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error(f"终止agent线程失败: {e}")
             finally:
