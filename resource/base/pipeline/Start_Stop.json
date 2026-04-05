@@ -1,12 +1,7 @@
 {
   "启动": {
     "next": [
-      "检查主界面_启动1",
-      "[JumpBack]关闭主页剧情提示",
-      "[JumpBack]关闭奖励通知",
-      "[JumpBack]关闭皮肤购买界面",
-      "[JumpBack]关闭签到界面",
-      "[JumpBack]进入游戏",
+      "进入游戏",
       "[JumpBack]服务器选择",
       "[JumpBack]启动游戏"
     ]
@@ -27,12 +22,11 @@
     "post_delay": 10000,
     "next": [
       "检查主界面_启动2",
+      "[JumpBack]关闭待机页面",
       "[JumpBack]关闭主页剧情提示",
       "[JumpBack]关闭奖励通知",
       "[JumpBack]关闭皮肤购买界面",
-      "[JumpBack]关闭签到界面",
-      "[JumpBack]进入游戏",
-      "[JumpBack]启动游戏"
+      "[JumpBack]关闭签到界面"
     ]
   },
   "检查主界面_启动2": {
@@ -51,12 +45,11 @@
     "post_delay": 10000,
     "next": [
       "检查主界面",
+      "[JumpBack]关闭待机页面",
       "[JumpBack]关闭主页剧情提示",
       "[JumpBack]关闭奖励通知",
       "[JumpBack]关闭皮肤购买界面",
-      "[JumpBack]关闭签到界面",
-      "[JumpBack]进入游戏",
-      "[JumpBack]启动游戏"
+      "[JumpBack]关闭签到界面"
     ]
   },
   "关闭主页剧情提示":{
@@ -65,7 +58,7 @@
       "param":{
         "roi":[288, 187, 695, 354],
         "expected": [
-          "稍后再说"
+          "稍后"
         ]
       }
     },
@@ -139,7 +132,16 @@
       }
     },
     "action": "Click",
-    "post_delay": 10000
+    "post_delay": 15000,
+    "next": [
+      "检查主界面_启动1",
+      "[JumpBack]关闭待机页面",
+      "[JumpBack]关闭主页剧情提示",
+      "[JumpBack]关闭奖励通知",
+      "[JumpBack]关闭皮肤购买界面",
+      "[JumpBack]关闭签到界面",
+      "进入游戏"
+    ]
   },
   "服务器选择":{
     "recognition":{
@@ -157,7 +159,8 @@
       "param": {
         "package": "com.yongshi.tenojo.ys"
       }
-    }
+    },
+    "post_delay": 35000
   },
   "关闭游戏": {
     "action": {
