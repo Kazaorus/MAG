@@ -48,7 +48,7 @@
                 ]
             }
         },
-        "post_wait_freezes": 1000
+        "post_delay": 1500
     },
     "领取委托奖励": {
         "recognition": {

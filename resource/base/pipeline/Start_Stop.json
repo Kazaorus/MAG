@@ -26,7 +26,8 @@
       "[JumpBack]关闭主页剧情提示",
       "[JumpBack]关闭奖励通知",
       "[JumpBack]关闭皮肤购买界面",
-      "[JumpBack]关闭签到界面"
+      "[JumpBack]关闭签到界面",
+      "[JumpBack]服务器选择"
     ]
   },
   "检查主界面_启动2": {
@@ -49,7 +50,8 @@
       "[JumpBack]关闭主页剧情提示",
       "[JumpBack]关闭奖励通知",
       "[JumpBack]关闭皮肤购买界面",
-      "[JumpBack]关闭签到界面"
+      "[JumpBack]关闭签到界面",
+      "[JumpBack]服务器选择"
     ]
   },
   "关闭主页剧情提示":{
@@ -63,7 +65,7 @@
       }
     },
     "action":"Click",
-    "post_wait_freezes": 1000
+    "post_delay": 1000
   },
   "关闭皮肤购买界面": {
     "recognition": {
