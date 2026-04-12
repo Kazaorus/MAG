@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.5.1",
+    "version": "1.5.2",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",

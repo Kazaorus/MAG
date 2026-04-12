@@ -475,9 +475,16 @@ class TaskFlowRunner(QObject):
                 _deep_merge_dict,
             )
 
+            from app.core.service.interface_manager import InterfaceManager
+
+            interface_manager = InterfaceManager()
+            embedded_ready = interface_manager.apply_agent_customization()
+            runner_interface = interface_manager.get_interface() or {}
+            self.task_service.interface = runner_interface
+
             # 1. 配置级 global_option + resource.option（已在函数内按优先级合并）
             self._default_pipeline_override = get_pipeline_override_from_task_option(
-                self.task_service.interface,
+                runner_interface,
                 resource_cfg.task_option,
                 _RESOURCE_,
                 self.config_service.get_current_global_options(),
@@ -485,22 +492,40 @@ class TaskFlowRunner(QObject):
 
             # 2. controller.option（优先级高于 resource.option 和 global_option）
             controller_override = get_controller_option_pipeline_override(
-                self.task_service.interface, controller_cfg.task_option
+                runner_interface, controller_cfg.task_option
             )
             if controller_override:
                 _deep_merge_dict(self._default_pipeline_override, controller_override)
 
-            if self.task_service.interface.get("agent", None):
-                self.maafw.agent_data_raw = self.task_service.interface.get(
-                    "agent", None
+            embedded_error = str(runner_interface.get("__embedded_agent_error", "") or "").strip()
+            if not embedded_ready:
+                logger.error("嵌入式 Agent 准备失败: %s", embedded_error or "未知原因")
+                self.log_output.emit(
+                    "ERROR",
+                    self.tr("Embedded Agent prepare failed: ")
+                    + (embedded_error or self.tr("Unknown reason")),
                 )
+                await self.stop_task()
+                return
+
+            agent_config = runner_interface.get("agent", None)
+            if (
+                isinstance(agent_config, dict)
+                and agent_config
+                and not agent_config.get("embedded")
+            ):
+                self.maafw.agent_data_raw = runner_interface.get("agent", None)
                 # v2.5.0: 构建 PI_* 环境变量供 agent 子进程使用
                 self.maafw.agent_env_vars = self._build_agent_env_vars(
                     controller_cfg, resource_cfg
                 )
                 self.log_output.emit("INFO", self.tr("Agent Service Start"))
 
-            if self.task_service.interface.get("custom", None) and self.maafw.resource:
+            if runner_interface.get("custom", None) and self.maafw.resource:
+                logger.info(
+                    "检测到 embedded custom，准备加载自定义组件: %s",
+                    runner_interface.get("custom", ""),
+                )
                 self.log_output.emit(
                     "INFO", self.tr("Starting to load custom components...")
                 )
@@ -508,7 +533,7 @@ class TaskFlowRunner(QObject):
                 self.maafw.resource.clear_custom_action()
 
                 # 兼容绝对路径与相对 bundle.path 的自定义配置路径
-                custom_config_path = self.task_service.interface.get("custom", "")
+                custom_config_path = runner_interface.get("custom", "")
                 if custom_config_path:
                     bundle_path_str = self.bundle_path or "./"
                     base_dir = Path(bundle_path_str)
@@ -1127,9 +1152,7 @@ class TaskFlowRunner(QObject):
         if permission_required is None:
             if isinstance(controller_name, str) and controller_name:
                 try:
-                    for ctrl in (self.task_service.interface or {}).get(
-                        "controller", []
-                    ):
+                    for ctrl in (self.task_service.interface or {}).get("controller", []):
                         if not isinstance(ctrl, dict):
                             continue
                         if ctrl.get("name") == controller_name:
@@ -1606,57 +1629,15 @@ class TaskFlowRunner(QObject):
 
         logger.info("每次连接前自动搜索 ADB 设备...")
         self.log_output.emit("INFO", self.tr("Auto searching ADB devices..."))
-        found_device = await self._auto_find_adb_device(
-            controller_raw, controller_type, controller_config
-        )
-        if found_device:
-            self._save_device_to_config(controller_raw, controller_name, found_device)
-            controller_config = controller_raw[controller_name]
-            self.adb_controller_config = controller_config
-            # 恢复原始的 input_methods 和 screencap_methods
-            if has_raw_input_method:
-                controller_config["input_methods"] = raw_input_method
-            if has_raw_screen_method:
-                controller_config["screencap_methods"] = raw_screen_method
-
-        adb_path = controller_config.get("adb_path", "")
-        address = controller_config.get("address", "")
-
-        # 检查 adb 路径和连接地址
-        if not adb_path:
-            error_msg = self.tr(
-                "ADB path is empty, please configure ADB path in settings"
-            )
-            logger.error("ADB 路径为空")
-            self.log_output.emit("ERROR", error_msg)
-            return False
-
-        if not address:
-            error_msg = self.tr(
-                "ADB connection address is empty, please configure device connection in settings"
-            )
-            logger.error("ADB 连接地址为空")
-            self.log_output.emit("ERROR", error_msg)
-            return False
-        # 使用之前保存的原始值（已在重新搜索前读取）
-
-        def normalize_input_method(value: int) -> int:
-            mask = (1 << 64) - 1
-            value &= mask
-            if value & (1 << 63):
-                value -= 1 << 64
-            return value
-
-        input_method = normalize_input_method(raw_input_method)
-        screen_method = normalize_input_method(raw_screen_method)
-        config = controller_config.get("config", {})
-
-        if await self.maafw.connect_adb(
-            adb_path,
-            address,
-            screen_method,
-            input_method,
-            config,
+        if await self._try_prepare_and_connect_adb(
+            controller_raw=controller_raw,
+            controller_type=controller_type,
+            controller_name=controller_name,
+            has_raw_input_method=has_raw_input_method,
+            raw_input_method=raw_input_method,
+            has_raw_screen_method=has_raw_screen_method,
+            raw_screen_method=raw_screen_method,
+            force_refresh=True,
         ):
             # 连接成功后额外等待 5 秒，防止程序初始化未完成
             await asyncio.sleep(5)
@@ -1674,8 +1655,14 @@ class TaskFlowRunner(QObject):
                 poll_ok = await self._poll_connect(
                     wait_emu_start,
                     self.tr("waiting for emulator start..."),
-                    lambda: self.maafw.connect_adb(
-                        adb_path, address, screen_method, input_method, config,
+                    lambda: self._try_prepare_and_connect_adb(
+                        controller_raw=controller_raw,
+                        controller_type=controller_type,
+                        controller_name=controller_name,
+                        has_raw_input_method=has_raw_input_method,
+                        raw_input_method=raw_input_method,
+                        has_raw_screen_method=has_raw_screen_method,
+                        raw_screen_method=raw_screen_method,
                     ),
                 )
                 if poll_ok:
@@ -1685,8 +1672,14 @@ class TaskFlowRunner(QObject):
                 if self.need_stop:
                     return False
             else:
-                if await self.maafw.connect_adb(
-                    adb_path, address, screen_method, input_method, config,
+                if await self._try_prepare_and_connect_adb(
+                    controller_raw=controller_raw,
+                    controller_type=controller_type,
+                    controller_name=controller_name,
+                    has_raw_input_method=has_raw_input_method,
+                    raw_input_method=raw_input_method,
+                    has_raw_screen_method=has_raw_screen_method,
+                    raw_screen_method=raw_screen_method,
                 ):
                     # 启动模拟器后首次直接连接成功时，额外等待 5 秒
                     await asyncio.sleep(5)
@@ -1951,39 +1944,39 @@ class TaskFlowRunner(QObject):
         program_params = controller_config.get("program_params", "")
         wait_program_start = int(controller_config.get("wait_time", 0))
         self.process = self._start_process(program_path, program_params)
+        async def _try_find_and_connect_gamepad():
+            nonlocal controller_config
+            found = await self._auto_find_win32_window(
+                controller_raw, controller_type, controller_name, controller_config
+            )
+            if not found:
+                return False
+            self._save_device_to_config(controller_raw, controller_name, found)
+            controller_config = controller_raw[controller_name]
+            hwnd, gamepad_type = _collect_gamepad_params()
+            if not hwnd:
+                return False
+            return await self.maafw.connect_gamepad(
+                hwnd, gamepad_type, screencap_method
+            )
+
         if wait_program_start > 0:
-            countdown_ok = await self._countdown_wait(
+            poll_ok = await self._poll_connect(
                 wait_program_start,
                 self.tr("waiting for program start..."),
+                _try_find_and_connect_gamepad,
             )
-            if not countdown_ok:
+            if poll_ok:
+                return True
+            if self.need_stop:
                 return False
+        else:
+            if await _try_find_and_connect_gamepad():
+                return True
 
-        found_after_launch = await self._auto_find_win32_window(
-            controller_raw, controller_type, controller_name, controller_config
-        )
-        if not found_after_launch:
-            logger.error("启动程序后未找到与配置匹配的窗口")
-            self.log_output.emit("ERROR", self.tr("Device connection failed"))
-            return False
-
-        self._save_device_to_config(controller_raw, controller_name, found_after_launch)
-        controller_config = controller_raw[controller_name]
-        hwnd, gamepad_type = _collect_gamepad_params()
-        if not hwnd:
-            error_msg = self.tr(
-                "Window handle (hwnd) is empty, please configure window connection in settings"
-            )
-            logger.error("Gamepad 窗口句柄为空")
-            self.log_output.emit("ERROR", error_msg)
-            return False
-
-        connect_success = await self.maafw.connect_gamepad(
-            hwnd, gamepad_type, screencap_method
-        )
-        if not connect_success:
-            self.log_output.emit("ERROR", self.tr("Device connection failed"))
-        return bool(connect_success)
+        logger.error("启动程序后未找到与配置匹配的窗口")
+        self.log_output.emit("ERROR", self.tr("Device connection failed"))
+        return False
 
     async def _connect_playcover_controller(self, controller_raw: Dict[str, Any]):
         """连接 PlayCover 控制器"""
@@ -2088,6 +2081,100 @@ class TaskFlowRunner(QObject):
             return match.group(1).strip()
         return device_name.strip()
 
+    def _extract_device_family_name(self, device_name: str) -> str:
+        """提取忽略实例序号后的设备家族名称，用于雷电等动态 pid 场景匹配。"""
+        base_name = self._extract_device_base_name(device_name)
+        return re.sub(r"\[\d+\]", "", base_name).strip()
+
+    def _get_ld_extras(self, device_config: Dict[str, Any] | None) -> Dict[str, Any]:
+        """获取配置中的雷电 extras 信息。"""
+        if not isinstance(device_config, dict):
+            return {}
+        extras = device_config.get("config", {}).get("extras", {})
+        ld_config = extras.get("ld")
+        return ld_config if isinstance(ld_config, dict) else {}
+
+    def _uses_ld_extras(self, device_config: Dict[str, Any] | None) -> bool:
+        """判断当前配置是否启用了雷电 extras。"""
+        return bool(self._get_ld_extras(device_config))
+
+    async def _try_prepare_and_connect_adb(
+        self,
+        controller_raw: Dict[str, Any],
+        controller_type: str,
+        controller_name: str,
+        has_raw_input_method: bool,
+        raw_input_method: int,
+        has_raw_screen_method: bool,
+        raw_screen_method: int,
+        force_refresh: bool = False,
+    ) -> bool:
+        """执行一次 ADB 连接尝试，必要时先重新搜索并刷新设备配置。"""
+        controller_config = controller_raw.get(controller_name)
+        if not isinstance(controller_config, dict):
+            if controller_type in controller_raw and isinstance(
+                controller_raw.get(controller_type), dict
+            ):
+                controller_config = controller_raw[controller_type]
+                controller_raw[controller_name] = controller_config
+            else:
+                controller_config = {}
+                controller_raw[controller_name] = controller_config
+
+        self.adb_controller_config = controller_config
+        should_refresh = force_refresh or self._uses_ld_extras(controller_config)
+        if should_refresh:
+            found_device = await self._auto_find_adb_device(
+                controller_raw, controller_type, controller_config
+            )
+            if found_device:
+                self._save_device_to_config(controller_raw, controller_name, found_device)
+                controller_config = controller_raw[controller_name]
+                self.adb_controller_config = controller_config
+
+        if has_raw_input_method:
+            controller_config["input_methods"] = raw_input_method
+        if has_raw_screen_method:
+            controller_config["screencap_methods"] = raw_screen_method
+
+        adb_path = controller_config.get("adb_path", "")
+        address = controller_config.get("address", "")
+
+        if not adb_path:
+            error_msg = self.tr(
+                "ADB path is empty, please configure ADB path in settings"
+            )
+            logger.error("ADB 路径为空")
+            self.log_output.emit("ERROR", error_msg)
+            return False
+
+        if not address:
+            error_msg = self.tr(
+                "ADB connection address is empty, please configure device connection in settings"
+            )
+            logger.error("ADB 连接地址为空")
+            self.log_output.emit("ERROR", error_msg)
+            return False
+
+        def normalize_input_method(value: int) -> int:
+            mask = (1 << 64) - 1
+            value &= mask
+            if value & (1 << 63):
+                value -= 1 << 64
+            return value
+
+        input_method = normalize_input_method(raw_input_method)
+        screen_method = normalize_input_method(raw_screen_method)
+        config = controller_config.get("config", {})
+
+        return await self.maafw.connect_adb(
+            adb_path,
+            address,
+            screen_method,
+            input_method,
+            config,
+        )
+
     def _should_use_new_adb_device(
         self,
         old_config: Dict[str, Any],
@@ -2107,11 +2194,26 @@ class TaskFlowRunner(QObject):
         if not old_adb_path or not old_name:
             return True
 
-        # 两者都必须匹配
         adb_path_match = old_adb_path == new_adb_path
-        name_match = old_name == new_name
+        if not adb_path_match:
+            return False
 
-        return adb_path_match and name_match
+        if old_name == new_name:
+            return True
+
+        old_ld = self._get_ld_extras(old_config)
+        new_ld = self._get_ld_extras(new_device)
+        if old_ld or new_ld:
+            old_family = self._extract_device_family_name(old_config.get("device_name") or "")
+            new_family = self._extract_device_family_name(new_device.get("device_name") or "")
+            if old_family and new_family and old_family == new_family:
+                old_ld_path = str(old_ld.get("path") or "").strip().lower()
+                new_ld_path = str(new_ld.get("path") or "").strip().lower()
+                if old_ld_path and new_ld_path and old_ld_path != new_ld_path:
+                    return False
+                return True
+
+        return False
 
     def _should_use_new_win32_window(
         self,
