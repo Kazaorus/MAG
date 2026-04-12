@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",
@@ -91,10 +91,9 @@
             "name": "战斗任务",
             "entry": "战斗任务",
             "default_check": true,
-            "description": "<p>进行扫荡</p><ul><li>关卡类型：需要扫荡的关卡，仅支持在下拉选项框中选择</li><li>战斗次数：可以选择消耗全部体力或扫荡指定次数，扫荡次数可以手动输入</li><li>选择刻印类型：仅在刷相关关卡时生效</li></ul>",
+            "description": "<p>进行扫荡</p><ul><li>关卡类型：需要扫荡的关卡，仅支持在下拉选项框中选择</li><li>战斗次数：可以选择消耗全部体力或扫荡指定次数，扫荡次数可以手动输入</li><li>选择刻印类型：仅在刷相关关卡时出现</li></ul>",
             "option": [
                 "关卡类型",
-                "选择刻印",
                 "战斗次数"
             ]
         },
@@ -177,7 +176,7 @@
         {
             "name": "皮肤活动每日任务",
             "entry": "皮肤活动每日任务",
-            "default_check": false,
+            "default_check": true,
             "description": "<p>对于部分有相关活动界面的皮肤，领取其中的每日奖励</p><p>速通周期:每天5点后刷新一次</p><p>当前活动皮肤：</p><ul><li>不灭王权·荷鲁斯：完美合奏</li></ul>",
             "speedrun": {
                 "mode": "daily",
@@ -211,7 +210,7 @@
         {
             "name": "玩家召回任务",
             "entry": "玩家召回任务",
-            "default_check": false,
+            "default_check": true,
             "description": "<p>领取召回任务（携友同行）的奖励</p><p>速通周期:每天5点后刷新一次</p>",
             "speedrun": {
                 "mode": "daily",
@@ -402,7 +401,10 @@
                                 "进入联防协议关卡"
                             ]
                         }
-                    }
+                    },
+                    "option": [
+                        "选择刻印"
+                    ]
                 },
                 {
                     "name": "联防协议·信息集纳·震动",
@@ -676,7 +678,10 @@
                                 }
                             }
                         }
-                    }
+                    },
+                    "option": [
+                        "选择刻印"
+                    ]
                 },
                 {
                     "name": "刻印升级材料·启示录",

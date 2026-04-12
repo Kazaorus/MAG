@@ -5,6 +5,7 @@
 import warnings
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from PySide6.QtWidgets import QWidget, QVBoxLayout
+from app.core.utils.option_branches_compat import get_option_branches
 from app.utils.logger import logger
 from app.view.task_interface.components.option_framework.items import (
     OptionItemBase,
@@ -203,7 +204,7 @@ class OptionFormWidget(QWidget):
                     # 如果有 value 字段，提取出来
                     if "value" in value:
                         # 先保存 children 配置，等设置完值后再应用
-                        children_config = value.get("children", {})
+                        children_config = get_option_branches(value)
                         
                         # 设置选项值（这会触发 _update_children_visibility，只显示对应的子选项）
                         option_item.set_value(value["value"])
@@ -266,7 +267,7 @@ class OptionFormWidget(QWidget):
                 # 如果是配置格式（包含 value 字段）
                 if "value" in child_config:
                     # 先保存 children 配置
-                    children_config = child_config.get("children", {})
+                    children_config = get_option_branches(child_config)
                     
                     # 设置子选项的值（这会触发子选项的 _update_children_visibility）
                     child_widget.set_value(child_config["value"])
@@ -286,6 +287,112 @@ class OptionFormWidget(QWidget):
             else:
                 # 非字典值直接传递
                 child_widget.set_value(child_config)
+
+    def _get_active_child_option_values(self, option_item: "OptionItemBase") -> set[str]:
+        """获取当前处于激活状态的子选项分支。"""
+        if option_item.config_type == "checkbox":
+            current_value = getattr(option_item, "current_value", []) or []
+            return {str(value) for value in current_value}
+
+        child_definitions = option_item.config.get("children", {})
+        if not child_definitions or getattr(option_item, "current_value", None) is None:
+            return set()
+
+        current_value = option_item.current_value
+        selected_str = str(current_value)
+        matched_key = option_item._match_child_key(
+            child_definitions,
+            current_value,
+            selected_str,
+            selected_str.strip(),
+        )
+        return {str(matched_key)} if matched_key is not None else set()
+
+    def _resolve_child_target(
+        self,
+        option_item: "OptionItemBase",
+        config_key: str,
+        search_option_values: set[str],
+    ) -> tuple[Optional[str], Optional["OptionItemBase"]]:
+        """根据配置 key 定位子选项，优先命中当前激活分支。"""
+        child_definitions = option_item.config.get("children", {})
+
+        if config_key in child_definitions:
+            return str(config_key), None
+
+        direct_widget = option_item.child_options.get(config_key)
+        if direct_widget:
+            option_value = option_item.get_option_value_for_child_key(config_key)
+            return (str(option_value) if option_value is not None else None), direct_widget
+
+        for option_value in search_option_values:
+            child_key = option_item._child_name_map.get((option_value, config_key))
+            if child_key:
+                return option_value, option_item.child_options.get(child_key)
+
+        result = option_item.find_child_by_name(config_key)
+        if result:
+            option_value, child_widget = result
+            return str(option_value), child_widget
+
+        return None, None
+
+    def _is_grouped_children_branch(
+        self,
+        option_item: "OptionItemBase",
+        config_key: str,
+        child_cfg: Any,
+    ) -> bool:
+        """判断是否为新的按父分支分组的 children 结构。"""
+        if config_key not in option_item.config.get("children", {}):
+            return False
+        if not isinstance(child_cfg, dict):
+            return False
+        reserved_keys = {"value", "hidden", "children", "name"}
+        if any(key in child_cfg for key in reserved_keys):
+            return False
+
+        # 只有当分支内的每个键都能映射到该分支下的子控件时，才视为分组结构
+        for nested_key in child_cfg.keys():
+            child_key = option_item._child_name_map.get((config_key, nested_key))
+            if child_key is None:
+                return False
+        return True
+
+    def _apply_child_entry(
+        self,
+        option_item: "OptionItemBase",
+        config_key: str,
+        child_cfg: Any,
+        active_option_values: set[str],
+        search_option_values: Optional[set[str]] = None,
+    ) -> None:
+        """应用单个子选项配置。"""
+        option_value, child_widget = self._resolve_child_target(
+            option_item,
+            config_key,
+            search_option_values or active_option_values,
+        )
+
+        # 跳过非当前激活分支上的 hidden 子选项；若 hidden 标记陈旧但当前分支已激活，则仍尝试应用
+        if isinstance(child_cfg, dict) and child_cfg.get("hidden", False):
+            if not option_value or str(option_value) not in active_option_values:
+                logger.debug(f"跳过隐藏的子选项: option_key={option_item.key}, config_key={config_key}")
+                return
+
+        if option_value and child_cfg:
+            # 如果 child_cfg 是字典且包含 hidden 字段（但 hidden=False），移除 hidden 字段后应用
+            if isinstance(child_cfg, dict) and "hidden" in child_cfg:
+                actual_cfg = {k: v for k, v in child_cfg.items() if k != "hidden"}
+                if len(actual_cfg) == 1 and "value" in actual_cfg:
+                    actual_cfg = actual_cfg["value"]
+                self._apply_single_child_config(option_item, option_value, actual_cfg, child_widget)
+            else:
+                self._apply_single_child_config(option_item, option_value, child_cfg, child_widget)
+        else:
+            logger.debug(
+                f"跳过无效的子选项配置: option_key={option_item.key}, config_key={config_key}"
+            )
     
     def _apply_children_config(self, option_item: "OptionItemBase", children_config: Dict[str, Any]):
         """
@@ -297,42 +404,27 @@ class OptionFormWidget(QWidget):
         if not children_config:
             return
 
-        child_definitions = option_item.config.get("children", {})
+        active_option_values = self._get_active_child_option_values(option_item)
 
         for config_key, child_cfg in children_config.items():
-            # 跳过标记为 hidden 的子选项（hidden=True）
-            if isinstance(child_cfg, dict) and child_cfg.get("hidden", False):
-                logger.debug(f"跳过隐藏的子选项: option_key={option_item.key}, config_key={config_key}")
+            if self._is_grouped_children_branch(option_item, config_key, child_cfg):
+                branch_value = str(config_key)
+                for nested_key, nested_cfg in child_cfg.items():
+                    self._apply_child_entry(
+                        option_item,
+                        nested_key,
+                        nested_cfg,
+                        active_option_values,
+                        {branch_value},
+                    )
                 continue
-            
-            option_value = None
-            child_widget = None
-            
-            # 尝试方式1：config_key 是 option_value
-            if config_key in child_definitions:
-                option_value = config_key
-            
-            # 尝试方式2：config_key 是 child_name
-            if not option_value:
-                result = option_item.find_child_by_name(config_key)
-                if result:
-                    option_value, child_widget = result
 
-            if option_value and child_cfg:
-                # 如果 child_cfg 是字典且包含 hidden 字段（但 hidden=False），移除 hidden 字段后应用
-                if isinstance(child_cfg, dict) and "hidden" in child_cfg:
-                    # 移除 hidden 字段，保留其他配置
-                    actual_cfg = {k: v for k, v in child_cfg.items() if k != "hidden"}
-                    # 如果移除 hidden 后只剩下 value 字段，直接使用 value
-                    if len(actual_cfg) == 1 and "value" in actual_cfg:
-                        actual_cfg = actual_cfg["value"]
-                    self._apply_single_child_config(option_item, option_value, actual_cfg, child_widget)
-                else:
-                    self._apply_single_child_config(option_item, option_value, child_cfg, child_widget)
-            else:
-                logger.debug(
-                    f"跳过无效的子选项配置: option_key={option_item.key}, config_key={config_key}"
-                )
+            self._apply_child_entry(
+                option_item,
+                config_key,
+                child_cfg,
+                active_option_values,
+            )
     
     def get_options(self) -> Dict[str, Any]:
         """

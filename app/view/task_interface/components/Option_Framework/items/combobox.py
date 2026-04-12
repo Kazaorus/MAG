@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from qfluentwidgets import ComboBox
 
+from app.core.utils.option_branches_compat import set_option_branches
 from app.utils.logger import logger
 from .base import OptionItemBase, TooltipComboBox
 
@@ -129,8 +130,8 @@ class ComboBoxOptionItem(OptionItemBase):
         """获取当前选项的配置（递归获取子选项）"""
         result: Dict[str, Any] = {"value": self.current_value}
 
-        # 递归获取子选项的配置
-        children_config = {}
+        # 递归获取子选项的配置，按父分支分组保存，避免同名子选项互相覆盖
+        children_config: Dict[str, Dict[str, Any]] = {}
         active_child_keys = set()
 
         # 记录当前选中值对应的子选项键
@@ -149,32 +150,35 @@ class ComboBoxOptionItem(OptionItemBase):
         for child_key, child_widget in self.child_options.items():
             if child_widget:
                 child_option = child_widget.get_option()
+                option_value = self.get_option_value_for_child_key(child_key) or child_key
 
                 # 获取子选项的 name（用于简洁的配置保存格式）
                 child_name = child_widget.config.get("name", "")
-                # 使用 child_name 作为配置 key（如果存在），否则使用内部 key
                 config_key = child_name if child_name else child_key
+                group = children_config.setdefault(str(option_value), {})
+                if config_key in group:
+                    config_key = child_key
 
-                # 检查子选项是否被隐藏
+                # hidden 应由当前选中的 case 决定，避免父容器尚未显示时误判
                 is_active_child = child_key in active_child_keys
-                is_hidden = not (is_active_child and child_widget.isVisible())
+                is_hidden = not is_active_child
 
                 # 对于 input 类型的子选项，如果只有 value，直接使用值
                 if child_widget.config_type in ["input", "inputs"] and "children" not in child_option:
                     if is_hidden:
-                        children_config[config_key] = {
+                        group[config_key] = {
                             "value": child_option.get("value", ""),
                             "hidden": True,
                         }
                     else:
-                        children_config[config_key] = child_option.get("value", "")
+                        group[config_key] = child_option.get("value", "")
                 else:
                     if is_hidden:
                         child_option["hidden"] = True
-                    children_config[config_key] = child_option
+                    group[config_key] = child_option
 
         if children_config:
-            result["children"] = children_config
+            set_option_branches(result, children_config)
 
         return result
 
@@ -187,7 +191,7 @@ class ComboBoxOptionItem(OptionItemBase):
                 child_value = child_widget.get_simple_option()
                 return {
                     "value": self.current_value,
-                    "children": {self.current_value: child_value},
+                    "branches": {self.current_value: child_value},
                 }
         return self.current_value
 
