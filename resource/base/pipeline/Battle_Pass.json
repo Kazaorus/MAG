@@ -261,7 +261,8 @@
         "next": [
             "直接返回主菜单",
             "[JumpBack]关闭奖励通知",
-            "[JumpBack]关闭开通高级合约界面"
+            "[JumpBack]关闭开通高级合约界面",
+            "[JumpBack]关闭经验上限界面"
         ]
     },
     "关闭开通高级合约界面": {
@@ -276,6 +277,19 @@
                 ],
                 "expected": [
                     "直接领取"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_wait_freezes": 1000
+    },
+    "关闭经验上限界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [826, 529, 130, 66],
+                "expected": [
+                    "确定"
                 ]
             }
         },
