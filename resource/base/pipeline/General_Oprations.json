@@ -254,5 +254,20 @@
             }
         }
     },
-    "空白任务": {}
+    "空白任务": {},
+    "关闭广告":{
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "roi": [
+                    0,
+                    0,
+                    1280,
+                    720
+                ],
+                "template": "其他/模拟器广告.png"
+            }
+        },
+        "action": "Click"
+    }
 }
