@@ -75,6 +75,7 @@
         "action": "Click",
         "post_wait_freezes":1000,
         "next": [
+            "领取皮肤活动奖励",
             "直接返回主菜单",
             "[JumpBack]关闭奖励通知"
         ]

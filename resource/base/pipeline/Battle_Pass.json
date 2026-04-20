@@ -125,7 +125,8 @@
         "post_wait_freezes": 1000,
         "next": [
             "对策协议_每周任务",
-            "[JumpBack]关闭奖励通知"
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]关闭经验上限界面"
         ]
     },
     "对策协议_每周任务": {
@@ -170,7 +171,8 @@
         "post_wait_freezes": 1000,
         "next": [
             "对策协议_挑战任务",
-            "[JumpBack]关闭奖励通知"
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]关闭经验上限界面"
         ]
     },
     "对策协议_挑战任务": {
@@ -217,6 +219,7 @@
         "next": [
             "对策协议_检测等级奖励界面",
             "[JumpBack]关闭奖励通知",
+            "[JumpBack]关闭经验上限界面",
             "[JumpBack]返回上级菜单"
         ]
     },
