@@ -9,13 +9,8 @@
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "roi": [
-                    0,
-                    0,
-                    1920,
-                    1080
-                ],
-                "template": "其他/奇响派对.png"
+                "template": "其他/奇响派对.png",
+                "threshold": 0.5
             }
         },
         "action": "Click",
