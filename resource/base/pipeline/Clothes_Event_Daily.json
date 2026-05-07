@@ -16,8 +16,7 @@
         "action": "Click",
         "post_delay": 3000,
         "next":[
-            "领取皮肤活动奖励",
-            "[JumpBack]皮肤活动_见闻",
+            "皮肤活动_见闻",
             "[JumpBack]跳过剧情",
             "直接返回主菜单"
         ]
@@ -33,7 +32,13 @@
             }
         },
         "action":"Click",
-        "post_wait_freezes":1000
+        "post_wait_freezes":1000,
+        "next": [
+            "领取皮肤活动奖励",
+            "皮肤活动_见闻",
+            "[JumpBack]跳过剧情",
+            "直接返回主菜单"
+        ]
     },
     "跳过剧情": {
         "recognition": {
