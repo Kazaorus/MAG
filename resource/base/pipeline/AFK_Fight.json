@@ -1,0 +1,448 @@
+{
+    "挂机战斗": {
+        "next": [
+            "挂机_进入选人界面"
+        ]
+    },
+    "裂隙征兆_进入关卡": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    346,
+                    164,
+                    680,
+                    335
+                ],
+                "expected": [
+                    "\\d+"
+                ],
+                "threshold": 0.9
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "挂机_进入选人界面"
+        ]
+    },
+    "挂机_进入编队界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    0,
+                    633,
+                    207,
+                    87
+                ],
+                "expected": [
+                    "编队方案"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_delay": 1000,
+        "next": [
+            "挂机_选择编队",
+            "挂机_当前编队",
+            "[JumpBack]挂机_编队翻页"
+        ]
+    },
+    "挂机_当前编队": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1004,
+                    621,
+                    276,
+                    99
+                ],
+                "expected": [
+                    "当前编队"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    48,
+                    35
+                ]
+            }
+        },
+        "post_delay": 1000,
+        "next": [
+            "挂机_作战开始"
+        ]
+    },
+    "挂机_选择编队": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "expected": [
+                    ""
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_delay": 1000,
+        "next": [
+            "挂机_确认编队",
+            "挂机_当前编队"
+        ]
+    },
+    "挂机_编队翻页": {
+        "action": {
+            "type": "Swipe",
+            "param": {
+                "begin": [
+                    129,
+                    675
+                ],
+                "end": [
+                    [
+                        129,
+                        124
+                    ]
+                ]
+            }
+        },
+        "post_delay": 1000
+    },
+    "挂机_确认编队": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1004,
+                    621,
+                    276,
+                    99
+                ],
+                "expected": [
+                    "选择"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_delay": 1000,
+        "next": [
+            "挂机_作战开始"
+        ]
+    },
+    "挂机_作战开始": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1004,
+                    621,
+                    276,
+                    99
+                ],
+                "expected": [
+                    "作战开始"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_delay": 5000,
+        "rate_limit": 5000,
+        "timeout": 300000,
+        "next": [
+            "挂机_结束战斗",
+            "[JumpBack]挂机_跳过演出"
+        ]
+    },
+    "挂机_结束战斗": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    988,
+                    630,
+                    180,
+                    71
+                ],
+                "expected": [
+                    "确认"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 2000,
+        "next": [
+            "挂机_后续操作"
+        ]
+    },
+    "挂机_后续操作": {
+        "next": [
+            "直接返回主菜单"
+        ]
+    },
+    "挂机_跳过演出": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1105,
+                    0,
+                    175,
+                    76
+                ],
+                "expected": [
+                    "跳过"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_delay": 10000
+    },
+    "无归处之忆_伤害奖励10000": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    19,
+                    245,
+                    222,
+                    350
+                ],
+                "expected": [
+                    "10000"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "无归处之忆_伤害奖励20000",
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]点击下方空白"
+        ]
+    },
+    "无归处之忆_伤害奖励20000": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    19,
+                    245,
+                    222,
+                    350
+                ],
+                "expected": [
+                    "20000"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "无归处之忆_伤害奖励30000",
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]点击下方空白"
+        ]
+    },
+    "无归处之忆_伤害奖励30000": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    19,
+                    245,
+                    222,
+                    350
+                ],
+                "expected": [
+                    "30000"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "无归处之忆_伤害奖励40000",
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]点击下方空白"
+        ]
+    },
+    "无归处之忆_伤害奖励40000": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    19,
+                    245,
+                    222,
+                    350
+                ],
+                "expected": [
+                    "40000"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "直接返回主菜单",
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]点击下方空白"
+        ]
+    },
+    
+    "挂机_进入选人界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    853,
+                    579,
+                    427,
+                    141
+                ],
+                "expected": [
+                    "准备作战",
+                    "开始挑战"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 2000,
+        "next": [
+            "挂机_进入编队界面"
+        ]
+    },
+    "裂隙征兆_领取奖励": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    1034,
+                    0,
+                    246,
+                    75
+                ],
+                "expected": [
+                    "首战"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "直接返回主菜单",
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]点击下方空白"
+        ]
+    },
+    
+    "介质攫取_奖励领取界面": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    0,
+                    611,
+                    195,
+                    109
+                ],
+                "expected": [
+                    "奖励领取"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "介质攫取_奖励领取"
+        ]
+    },
+    "介质攫取_奖励领取": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [
+                    895,
+                    629,
+                    260,
+                    72
+                ],
+                "expected": [
+                    "领取"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "介质攫取_退出奖励界面",
+            "[JumpBack]关闭奖励通知"
+        ]
+    },
+    "介质攫取_退出奖励界面": {
+        "recognition": {
+            "type": "TemplateMatch",
+            "param": {
+                "template": [
+                    "其他/介质攫取_退出奖励界面.png"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000,
+        "next": [
+            "直接返回主菜单"
+        ]
+    },
+    "挂机_关闭提示": {
+        "recognition": {
+            "type": "OCR",
+            "param": {
+                "roi": [713, 499, 355, 120],
+                "expected": [
+                    "确认"
+                ]
+            }
+        },
+        "action": {
+            "type": "Click"
+        },
+        "post_wait_freezes": 1000
+    }
+}

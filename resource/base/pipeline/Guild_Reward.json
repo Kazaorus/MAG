@@ -149,28 +149,13 @@
         "recognition": {
             "type": "OCR",
             "param": {
-                "roi": [
-                    20,
-                    73,
-                    220,
-                    125
-                ],
+                "roi": [506, 263, 269, 196],
                 "expected": [
-                    "联合攻坚"
+                    "无.*归.*处.*之.*忆"
                 ]
             }
         },
-        "action": {
-            "type": "Click",
-            "param": {
-                "target": [
-                    646,
-                    377,
-                    1,
-                    1
-                ]
-            }
-        }
+        "action": "Click"
     },
     "进入联合攻坚": {
         "recognition": {

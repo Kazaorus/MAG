@@ -24,39 +24,46 @@
             "param": {
                 "target": [
                     640,
-                    360,
-                    1,
-                    1
+                    360
                 ]
             }
         },
         "next": [
             "进入任务"
+        ],
+        "timeout": 5000,
+        "on_error": [
+            "直接点击任务"
         ]
     },
     "进入任务": {
         "recognition": {
             "type": "TemplateMatch",
             "param": {
-                "roi": [
-                    1105,
-                    47,
-                    148,
-                    81
-                ],
-                "template": "通用操作/主页标志.png",
+                "roi": [943, 49, 200, 70],
+                "template": "周期性任务/主页任务按钮.png",
                 "threshold": 0.5
             }
         },
-        "action": {
-            "type": "Click",
-            "param": {
-                "target": [1052, 79]
-            }
-        },
+        "action": "Click",
+        "post_delay": 2000,
         "next": [
             "任务界面",
             "进入任务"
+        ]
+    },
+    "直接点击任务": {
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [1043, 76]
+            }
+        },
+        "post_delay": 2000,
+        "max_hit": 10,
+        "next": [
+            "任务界面",
+            "直接点击任务"
         ]
     },
     "任务界面": {

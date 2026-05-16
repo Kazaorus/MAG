@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.5.3",
+    "version": "1.5.4",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",
@@ -96,6 +96,27 @@
                 "关卡类型",
                 "战斗次数"
             ]
+        },
+        {
+            "name": "挂机战斗",
+            "entry": "挂机战斗",
+            "description": "<p>进行挂机战斗</p><p>速通周期:每天5点后刷新一次</p><p>进入战斗关卡后挂机，需要把主力输出放在队友位</p>",
+            "option": [
+                "挂机关卡",
+                "挂机限时",
+                "配队名称"
+            ],
+            "speedrun": {
+                "mode": "daily",
+                "trigger": {
+                    "daily": {
+                        "hour_start": 5
+                    }
+                },
+                "run": {
+                    "count": 1
+                }
+            }
         },
         {
             "name": "列表任务奖励",
@@ -792,6 +813,128 @@
                         "type": "Custom",
                         "param": {
                             "custom_action_param": "{扫荡次数}"
+                        }
+                    }
+                }
+            }
+        },
+        "挂机关卡": {
+            "label": "选择要挂机的关卡",
+            "cases": [
+                {
+                    "name": "联合攻坚·裂隙征兆",
+                    "pipeline_override": {
+                        "挂机战斗": {
+                            "next": [
+                                "裂隙征兆_进入关卡",
+                                "[JumpBack]挂机_关闭提示",
+                                "[JumpBack]进入联合攻坚",
+                                "[JumpBack]进入公会",
+                                "[JumpBack]关闭待机页面",
+                                "直接返回主菜单"
+                            ]
+                        },
+                        "裂隙征兆_进入关卡": {
+                            "next": [
+                                "挂机_进入选人界面",
+                                "裂隙征兆_进入关卡",
+                                "[JumpBack]挂机_关闭提示"
+                            ]
+                        },
+                        "挂机_后续操作": {
+                            "next": [
+                                "裂隙征兆_领取奖励"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "联合攻坚·无归处之忆",
+                    "pipeline_override": {
+                        "挂机战斗": {
+                            "next": [
+                                "挂机_进入选人界面",
+                                "[JumpBack]进入联合攻坚挑战界面",
+                                "[JumpBack]进入联合攻坚",
+                                "[JumpBack]进入公会",
+                                "[JumpBack]关闭待机页面",
+                                "直接返回主菜单"
+                            ]
+                        },
+                        "挂机_后续操作": {
+                            "next": [
+                                "无归处之忆_伤害奖励10000"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "介质攫取",
+                    "pipeline_override": {
+                        "挂机战斗": {
+                            "next": [
+                                "挂机_进入选人界面",
+                                "[JumpBack]进入资源关卡",
+                                "[JumpBack]关闭待机页面",
+                                "[JumpBack]寻找资源关卡",
+                                "[JumpBack]进入刻印作战",
+                                "[JumpBack]前往作战"
+                            ]
+                        },
+                        "进入资源关卡": {
+                            "recognition": {
+                                "param": {
+                                    "expected": [
+                                        "介质攫取",
+                                        "介质"
+                                    ]
+                                }
+                            }
+                        },
+                        "挂机_后续操作": {
+                            "next": [
+                                "介质攫取_奖励领取界面"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        "挂机限时": {
+            "label": "输入挂机限时（毫秒），超时视为任务失败",
+            "type": "input",
+            "inputs": [
+                {
+                    "name": "挂机限时",
+                    "description": "<p>输入挂机限时（毫秒），默认5分钟</p>",
+                    "default": 300000,
+                    "pipeline_type": "int"
+                }
+            ],
+            "pipeline_override": {
+                "挂机_作战开始": {
+                    "timeout": "{挂机限时}"
+                }
+            }
+        },
+        "配队名称": {
+            "label": "输入要挂机的队伍名称",
+            "type": "input",
+            "inputs": [
+                {
+                    "name": "队伍名称",
+                    "description": "<p>请输入要挂机的队伍名称，如“队伍1”等</p>",
+                    "default": "",
+                    "pipeline_type": "string"
+                }
+            ],
+            "pipeline_override": {
+                "挂机_选择编队": {
+                    "recognition": {
+                        "param": {
+                            "expected": [
+                                "{队伍名称}"
+                            ]
                         }
                     }
                 }
