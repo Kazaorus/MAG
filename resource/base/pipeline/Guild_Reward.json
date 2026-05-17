@@ -9,21 +9,27 @@
     },
     "进入公会": {
         "recognition": {
-            "type": "OCR",
+            "type": "TemplateMatch",
             "param": {
                 "roi": [
-                    782,
-                    634,
-                    80,
+                    1105,
+                    47,
+                    148,
                     81
                 ],
-                "expected": [
-                    "公会"
+                "template": "通用操作/主页标志.png"
+            }
+        },
+        "action": {
+            "type": "Click",
+            "param": {
+                "target": [
+                    820,
+                    675
                 ]
             }
         },
-        "action": "Click",
-        "post_wait_freezes":5000
+        "post_delay": 5000
     },
     //以下是常规每日补给部分
     "矩阵补给": {

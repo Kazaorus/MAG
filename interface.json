@@ -2088,7 +2088,8 @@
                                 "[JumpBack]进入联合攻坚挑战奖励界面",
                                 "[JumpBack]进入联合攻坚挑战界面",
                                 "[JumpBack]进入联合攻坚",
-                                "[JumpBack]进入公会"
+                                "[JumpBack]进入公会",
+                                "[JumpBack]关闭待机页面"
                             ]
                         }
                     }
@@ -2100,7 +2101,8 @@
                             "next": [
                                 "检测公会任务奖励界面",
                                 "[JumpBack]公会任务",
-                                "[JumpBack]进入公会"
+                                "[JumpBack]进入公会",
+                                "[JumpBack]关闭待机页面"
                             ]
                         }
                     }
