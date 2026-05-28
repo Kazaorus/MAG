@@ -949,6 +949,20 @@
                     "pipeline_override": {}
                 },
                 {
+                    "name": "百锻",
+                    "pipeline_override": {
+                        "选择刻印": {
+                            "action": {
+                                "param": {
+                                    "custom_action_param": {
+                                        "aim": "百锻"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                {
                     "name": "天地无倪",
                     "pipeline_override": {
                         "选择刻印": {
