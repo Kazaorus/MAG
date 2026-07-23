@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "MAG",
     "github": "https://github.com/Kazaorus/MAG",
-    "version": "1.5.4",
+    "version": "1.5.5",
     "icon": "./logo.ico",
     "license": "./LICENSE",
     "welcome": "./README.md",
@@ -34,7 +34,7 @@
             "name": "启动",
             "entry": "启动",
             "default_check": true,
-            "description": "<p>选择”艾因索菲“或”蒂卡拉“服务器</p><p>注意：该”选择服务器“选项并不能在进入时主动选择服务器，其作用在于当游戏启动时因为一些原因进入服务器选择界面时不至于卡住不动</p>",
+            "description": "<p>选择”艾因索菲“或”蒂卡拉“服务器</p>",
             "option":[
                 "选择服务器"
             ]
@@ -198,7 +198,7 @@
             "name": "皮肤活动每日任务",
             "entry": "皮肤活动每日任务",
             "default_check": true,
-            "description": "<p>对于部分有相关活动界面的皮肤，领取其中的每日奖励</p><p>速通周期:每天5点后刷新一次</p><p>当前活动皮肤：</p><ul><li>不灭王权·荷鲁斯：完美合奏</li></ul>",
+            "description": "<p>对于部分有相关活动界面的皮肤，领取其中的每日奖励</p><p>速通周期:每天5点后刷新一次</p>",
             "speedrun": {
                 "mode": "daily",
                 "trigger": {
@@ -208,6 +208,21 @@
                 },
                 "run": {
                     "count": 1
+                }
+            },
+            "pipeline_override": {
+                "进入列表任务界面": {
+                    "recognition": {
+                        "type": "OCR",
+                        "param": {
+                            "expected": [
+                                "月色予梦"
+                            ]
+                        }
+                    },
+                    "next": [
+                        "皮肤任务界面"
+                    ]
                 }
             }
         },
@@ -291,7 +306,7 @@
                 {
                     "name": "艾因索菲",
                     "pipeline_override":{
-                        "服务器选择":{
+                        "确认服务器":{
                             "recognition":{
                                 "type":"OCR",
                                 "param":{
@@ -304,7 +319,7 @@
                 {
                     "name": "蒂卡拉",
                     "pipeline_override":{
-                        "服务器选择":{
+                        "确认服务器":{
                             "recognition":{
                                 "type":"OCR",
                                 "param":{
@@ -947,6 +962,20 @@
                 {
                     "name": "无",
                     "pipeline_override": {}
+                },
+                {
+                    "name": "「 魔术师」之念",
+                    "pipeline_override": {
+                        "选择刻印": {
+                            "action": {
+                                "param": {
+                                    "custom_action_param": {
+                                        "aim": "「 魔术师」之念"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
                 {
                     "name": "百锻",

@@ -1,8 +1,13 @@
 {
     "启动": {
         "next": [
-            "进入游戏",
-            "[JumpBack]服务器选择",
+            "检查主界面_启动1",
+            "[JumpBack]关闭待机页面",
+            "[JumpBack]关闭主页剧情提示",
+            "[JumpBack]关闭奖励通知",
+            "[JumpBack]关闭皮肤购买界面",
+            "[JumpBack]关闭签到界面",
+            "服务器选择",
             "[JumpBack]关闭广告",
             "[JumpBack]启动游戏"
         ]
@@ -28,8 +33,7 @@
             "[JumpBack]关闭主页剧情提示",
             "[JumpBack]关闭奖励通知",
             "[JumpBack]关闭皮肤购买界面",
-            "[JumpBack]关闭签到界面",
-            "[JumpBack]服务器选择"
+            "[JumpBack]关闭签到界面"
         ]
     },
     "检查主界面_启动2": {
@@ -53,8 +57,7 @@
             "[JumpBack]关闭主页剧情提示",
             "[JumpBack]关闭奖励通知",
             "[JumpBack]关闭皮肤购买界面",
-            "[JumpBack]关闭签到界面",
-            "[JumpBack]服务器选择"
+            "[JumpBack]关闭签到界面"
         ]
     },
     "关闭主页剧情提示":{
@@ -156,11 +159,32 @@
         "recognition":{
             "type":"OCR",
             "param":{
-                "roi": [566, 275, 146, 172],
+                "roi": [515, 550, 226, 34],
+                "expected": [
+                    "艾因索菲",
+                    "蒂卡拉"
+                ]
+            }
+        },
+        "action": "Click",
+        "post_delay": 1000,
+        "next": [
+            "确认服务器"
+        ]
+    },
+    "确认服务器":{
+        "recognition":{
+            "type":"OCR",
+            "param":{
+                "roi": [512, 274, 249, 174],
                 "expected": "_"
             }
         },
-        "action": "Click"
+        "action": "Click",
+        "post_delay": 1000,
+        "next": [
+            "进入游戏"
+        ]
     },
     "启动游戏": {
         "action": {

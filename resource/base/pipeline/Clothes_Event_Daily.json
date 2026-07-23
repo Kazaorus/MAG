@@ -1,16 +1,24 @@
 {
     "皮肤活动每日任务": {
         "next": [
-            "皮肤任务界面",
+            "进入列表任务界面",
+            "[JumpBack]寻找列表任务",
+            "[JumpBack]进入活动界面",
             "[JumpBack]关闭待机页面"
+        ],
+        "on_error": [
+            "直接返回主菜单"
         ]
     },
     "皮肤任务界面": {
         "recognition": {
-            "type": "TemplateMatch",
+            "type": "OCR",
             "param": {
-                "template": "其他/奇响派对.png",
-                "threshold": 0.5
+                "roi": [1083, 622, 189, 71],
+                "expected": [
+                    "前往",
+                    "邀约"
+                ]
             }
         },
         "action": "Click",
